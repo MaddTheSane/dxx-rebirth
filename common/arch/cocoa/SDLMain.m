@@ -64,10 +64,10 @@ static NSString *getApplicationName(void)
 @end
 #endif
 
-@interface NSApplication (SDLApplication)
+@interface SDLApplication: NSApplication
 @end
 
-@implementation NSApplication (SDLApplication)
+@implementation SDLApplication
 /* Invoked from the Quit menu item */
 - (void)terminate:(id)sender
 {
@@ -201,7 +201,7 @@ static void CustomApplicationMain (int argc, char **argv)
     SDLMain				*sdlMain;
 
     /* Ensure the application object is initialised */
-    [NSApplication sharedApplication];
+    [SDLApplication sharedApplication];
     
 #ifdef SDL_USE_CPS
     {

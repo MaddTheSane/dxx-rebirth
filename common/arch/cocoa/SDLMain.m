@@ -210,7 +210,7 @@ static void CustomApplicationMain (int argc, char **argv)
         if (!CPSGetCurrentProcess(&PSN))
             if (!CPSEnableForegroundOperation(&PSN,0x03,0x3C,0x2C,0x1103))
                 if (!CPSSetFrontProcess(&PSN))
-                    [NSApplication sharedApplication];
+                    [SDLApplication sharedApplication];
     }
 #endif /* SDL_USE_CPS */
 

@@ -76,7 +76,7 @@ static void do_physics_align_object(object_base &obj)
 	fixang delta_ang,roll_ang;
 	//vms_vector forvec = {0,0,f1_0};
 	fix largest_d=-f1_0;
-	const side *best_side = nullptr;
+	const shared_side *best_side = nullptr;
 	// bank player according to segment orientation
 
 	//find side of segment that player is most alligned with
@@ -416,9 +416,10 @@ window_event_result do_physics_sim(const vmobjptridx_t obj, phys_visited_seglist
 		fate = find_vector_intersection(fq, hit_info);
 		//	Matt: Mike's hack.
 		if (fate == HIT_OBJECT) {
-			const auto &&objp = vcobjptr(hit_info.hit_object);
+			auto &objp = *vcobjptr(hit_info.hit_object);
 
-			if (((objp->type == OBJ_WEAPON) && is_proximity_bomb_or_smart_mine(get_weapon_id(objp))) || objp->type == OBJ_POWERUP) // do not increase count for powerups since they *should* not change our movement
+			if ((objp.type == OBJ_WEAPON && is_proximity_bomb_or_smart_mine(get_weapon_id(objp))) ||
+				objp.type == OBJ_POWERUP) // do not increase count for powerups since they *should* not change our movement
 				count--;
 		}
 
@@ -574,7 +575,7 @@ window_event_result do_physics_sim(const vmobjptridx_t obj, phys_visited_seglist
 
 					if (!forcefield_bounce && (obj->mtype.phys_info.flags & PF_STICK)) {		//stop moving
 
-						add_stuck_object(obj, vmsegptr(WallHitSeg), WallHitSide);
+						LevelUniqueStuckObjectState.add_stuck_object(vcwallptr, obj, vmsegptr(WallHitSeg), WallHitSide);
 
 						vm_vec_zero(obj->mtype.phys_info.velocity);
 						obj_stopped = 1;
@@ -723,12 +724,13 @@ window_event_result do_physics_sim(const vmobjptridx_t obj, phys_visited_seglist
 		if (sidenum != side_none)
 		{
 
-			if (! (WALL_IS_DOORWAY(orig_segp,sidenum) & WID_FLY_FLAG)) {
+			if (! (WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, orig_segp, orig_segp, sidenum) & WID_FLY_FLAG))
+			{
 				fix dist;
 
 				//bump object back
 
-				const auto s = &orig_segp->sides[sidenum];
+				auto &s = orig_segp->sides[sidenum];
 
 				const auto v = create_abs_vertex_lists(orig_segp, s, sidenum);
 				const auto &vertex_list = v.second;
@@ -737,8 +739,8 @@ window_event_result do_physics_sim(const vmobjptridx_t obj, phys_visited_seglist
 				const auto b = begin(vertex_list);
 				const auto vertnum = *std::min_element(b, std::next(b, 4));
 
-				dist = vm_dist_to_plane(start_pos, s->normals[0], vcvertptr(vertnum));
-					vm_vec_scale_add(obj->pos,start_pos,s->normals[0],obj->size-dist);
+				dist = vm_dist_to_plane(start_pos, s.normals[0], vcvertptr(vertnum));
+				vm_vec_scale_add(obj->pos, start_pos, s.normals[0], obj->size-dist);
 				update_object_seg(obj);
 
 			}

@@ -109,7 +109,7 @@ constexpr array<char[12], ESCORT_GOAL_MARKER9> Escort_goal_text = {{
 // -- too much work -- 	"KAMIKAZE  "
 }};
 
-static int Max_escort_length = 200;
+constexpr std::integral_constant<unsigned, 200> Max_escort_length{};
 stolen_items_t Stolen_items;
 int	Stolen_item_index;
 fix64	Escort_last_path_created = 0;
@@ -234,10 +234,10 @@ static int ok_for_buddy_to_talk(void)
 	if (Buddy_allowed_to_talk)
 		return Buddy_allowed_to_talk;
 
-	const segment *const segp = vcsegptr(buddy->segnum);
+	const shared_segment &segp = vcsegptr(buddy->segnum);
 
 	for (int i=0; i<MAX_SIDES_PER_SEGMENT; i++) {
-		auto	wall_num = segp->sides[i].wall_num;
+		const auto wall_num = segp.sides[i].wall_num;
 
 		if (wall_num != wall_none) {
 			auto &w = *vcwallptr(wall_num);
@@ -246,8 +246,11 @@ static int ok_for_buddy_to_talk(void)
 		}
 
 		//	Check one level deeper.
-		if (IS_CHILD(segp->children[i])) {
-			range_for (const auto &j, vcsegptr(segp->children[i])->sides)
+		const auto child = segp.children[i];
+		if (IS_CHILD(child))
+		{
+			auto &cseg = *vcsegptr(child);
+			range_for (const auto &j, cseg.sides)
 			{
 				auto wall2 = j.wall_num;
 				if (wall2 != wall_none) {
@@ -331,20 +334,27 @@ void detect_escort_goal_accomplished(const vmobjptridx_t index)
 	}
 }
 
+#define DXX_GUIDEBOT_RENAME_MENU(VERB)	\
+	DXX_MENUITEM(VERB, INPUT, text, opt_name)	\
+
 void change_guidebot_name()
 {
-	int item;
 	auto text = PlayerCfg.GuidebotName;
-	array<newmenu_item, 1> m{{
-		nm_item_input(text),
-	}};
-	item = newmenu_do(NULL, "Enter Guide-bot name:", m, unused_newmenu_subfunction, unused_newmenu_userdata );
+	array<newmenu_item, DXX_GUIDEBOT_RENAME_MENU(COUNT)> m;
+	enum
+	{
+		DXX_GUIDEBOT_RENAME_MENU(ENUM)
+	};
+	DXX_GUIDEBOT_RENAME_MENU(ADD);
+	const auto item = newmenu_do(nullptr, "Enter Guide-bot name:", m, unused_newmenu_subfunction, unused_newmenu_userdata);
 
 	if (item != -1) {
 		PlayerCfg.GuidebotName = PlayerCfg.GuidebotNameReal = text;
 		write_player_file();
 	}
 }
+
+#undef DXX_GUIDEBOT_RENAME_MENU
 
 //	-----------------------------------------------------------------------------
 static int show_buddy_message()
@@ -529,7 +539,7 @@ static int get_boss_id(void)
 //	-----------------------------------------------------------------------------
 //	Return object index if object of objtype, objid exists in mine, else return -1
 //	"special" is used to find objects spewed by player which is hacked into flags field of powerup.
-static objnum_t exists_in_mine_2(const vcsegptr_t segp, const int objtype, const int objid, const int special)
+static objnum_t exists_in_mine_2(const unique_segment &segp, const int objtype, const int objid, const int special)
 {
 	range_for (const auto curobjp, objects_in(segp, vcobjptridx, vcsegptr))
 	{
@@ -718,7 +728,7 @@ static void escort_goal_unreachable(escort_goal_t goal)
 
 static void escort_go_to_goal(const vmobjptridx_t objp, ai_static *aip, segnum_t goal_seg)
 {
-	create_path_to_segment(objp, goal_seg, Max_escort_length, 1);	//	MK!: Last parm (safety_flag) used to be 1!!
+	create_path_to_segment(objp, goal_seg, Max_escort_length, create_path_safety_flag::safe);	//	MK!: Last parm (safety_flag) used to be 1!!
 	if (aip->path_length > 3)
 		aip->path_length = polish_path(objp, &Point_segs[aip->hide_index], aip->path_length);
 	if ((aip->path_length > 0) && (Point_segs[aip->hide_index + aip->path_length - 1].segnum != goal_seg)) {
@@ -728,7 +738,7 @@ static void escort_go_to_goal(const vmobjptridx_t objp, ai_static *aip, segnum_t
 		Escort_goal_object = ESCORT_GOAL_SCRAM;
 		dist_to_player = find_connected_distance(objp->pos, vmsegptridx(objp->segnum), Believed_player_pos, vmsegptridx(Believed_player_seg), 100, WID_FLY_FLAG);
 		if (dist_to_player > MIN_ESCORT_DISTANCE)
-			create_path_to_player(objp, Max_escort_length, 1);	//	MK!: Last parm used to be 1!
+			create_path_to_player(objp, Max_escort_length, create_path_safety_flag::safe);	//	MK!: Last parm used to be 1!
 		else {
 			create_n_segment_path(objp, 8 + d_rand() * 8, segment_none);
 			aip->path_length = polish_path(objp, &Point_segs[aip->hide_index], aip->path_length);
@@ -1069,7 +1079,7 @@ void do_escort_frame(const vmobjptridx_t objp, const object &plrobj, fix dist_to
 	}
 
 	if ((Escort_special_goal != ESCORT_GOAL_SCRAM) && time_to_visit_player(objp, ailp, aip)) {
-		int	max_len;
+		unsigned max_len;
 
 		Buddy_last_player_path_created = GameTime64;
 		ailp->mode = ai_mode::AIM_GOTO_PLAYER;
@@ -1083,7 +1093,7 @@ void do_escort_frame(const vmobjptridx_t objp, const object &plrobj, fix dist_to
 		max_len = Max_escort_length;
 		if (!Buddy_allowed_to_talk)
 			max_len = 3;
-		create_path_to_player(objp, max_len, 1);	//	MK!: Last parm used to be 1!
+		create_path_to_player(objp, max_len, create_path_safety_flag::safe);	//	MK!: Last parm used to be 1!
 		aip->path_length = polish_path(objp, &Point_segs[aip->hide_index], aip->path_length);
 		ailp->mode = ai_mode::AIM_GOTO_PLAYER;
 	}	else if (GameTime64 - Buddy_last_seen_player > MAX_ESCORT_TIME_AWAY) {
@@ -1136,7 +1146,7 @@ void do_snipe_frame(const vmobjptridx_t objp, fix dist_to_player, int player_vis
 
 			connected_distance = find_connected_distance(objp->pos, vmsegptridx(objp->segnum), Believed_player_pos, vmsegptridx(Believed_player_seg), 30, WID_FLY_FLAG);
 			if (connected_distance < F1_0*500) {
-				create_path_to_player(objp, 30, 1);
+				create_path_to_player(objp, 30, create_path_safety_flag::safe);
 				ailp->mode = ai_mode::AIM_SNIPE_ATTACK;
 				ailp->next_action_time = SNIPE_ATTACK_TIME;	//	have up to 10 seconds to find player.
 			}
@@ -1262,7 +1272,7 @@ void do_thief_frame(const vmobjptridx_t objp, fix dist_to_player, int player_vis
 		case ai_mode::AIM_THIEF_WAIT:
 			if (ailp->player_awareness_type >= player_awareness_type_t::PA_PLAYER_COLLISION) {
 				ailp->player_awareness_type = player_awareness_type_t::PA_NONE;
-				create_path_to_player(objp, 30, 1);
+				create_path_to_player(objp, 30, create_path_safety_flag::safe);
 				ailp->mode = ai_mode::AIM_THIEF_ATTACK;
 				ailp->next_action_time = THIEF_ATTACK_TIME/2;
 				return;
@@ -1279,7 +1289,7 @@ void do_thief_frame(const vmobjptridx_t objp, fix dist_to_player, int player_vis
 
 			connected_distance = find_connected_distance(objp->pos, vmsegptridx(objp->segnum), Believed_player_pos, vmsegptridx(Believed_player_seg), 30, WID_FLY_FLAG);
 			if (connected_distance < F1_0*500) {
-				create_path_to_player(objp, 30, 1);
+				create_path_to_player(objp, 30, create_path_safety_flag::safe);
 				ailp->mode = ai_mode::AIM_THIEF_ATTACK;
 				ailp->next_action_time = THIEF_ATTACK_TIME;	//	have up to 10 seconds to find player.
 			}
@@ -1331,7 +1341,7 @@ void do_thief_frame(const vmobjptridx_t objp, fix dist_to_player, int player_vis
 			} else if (ailp->next_action_time < 0) {
 				//	This forces him to create a new path every second.
 				ailp->next_action_time = F1_0;
-				create_path_to_player(objp, 100, 0);
+				create_path_to_player(objp, 100, create_path_safety_flag::unsafe);
 				ailp->mode = ai_mode::AIM_THIEF_ATTACK;
 			} else {
 				if (player_visibility && (dist_to_player < F1_0*100)) {
@@ -1850,8 +1860,8 @@ void show_escort_menu(const array<char, 300> &amsg)
 	gr_set_default_canvas();
 
 	auto &canvas = *grd_curcanv;
-	gr_set_curfont(canvas, GAME_FONT);
-	gr_get_string_size(*canvas.cv_font, msg, &w, &h, nullptr);
+	const auto &game_font = *GAME_FONT;
+	gr_get_string_size(game_font, msg, &w, &h, nullptr);
 
 	x = (SWIDTH-w)/2;
 	y = (SHEIGHT-h)/2;
@@ -1860,7 +1870,7 @@ void show_escort_menu(const array<char, 300> &amsg)
 
 	nm_draw_background(canvas, x - BORDERX, y - BORDERY, x + w + BORDERX, y + h + BORDERY);
 
-	gr_ustring(canvas, x, y, msg);
+	gr_ustring(canvas, game_font, x, y, msg);
 
 	reset_cockpit();
 }

@@ -58,7 +58,6 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "console.h"
 #include "compiler-range_for.h"
 #include "compiler-make_unique.h"
-#include "compiler-static_assert.h"
 #include "partial_range.h"
 
 #if defined(DXX_BUILD_DESCENT_I)
@@ -116,7 +115,7 @@ int Num_sound_files = 0;
 namespace dsx {
 array<digi_sound, MAX_SOUND_FILES> GameSounds;
 static array<int, MAX_SOUND_FILES> SoundOffset;
-array<grs_bitmap, MAX_BITMAP_FILES> GameBitmaps;
+GameBitmaps_array GameBitmaps;
 }
 
 #if defined(DXX_BUILD_DESCENT_I)

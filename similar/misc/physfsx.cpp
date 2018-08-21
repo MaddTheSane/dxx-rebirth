@@ -213,7 +213,7 @@ bool PHYSFSX_init(int argc, char *argv[])
 		con_printf(CON_DEBUG, "PHYSFS: append argument hog directory \"%s\" to search path", p);
 		PHYSFS_addToSearchPath(p, 1);
 	}
-#if defined(__unix__)
+#ifdef SHAREPATH
 	else if (!CGameArg.SysNoHogDir)
 	{
 		con_puts(CON_DEBUG, "PHYSFS: append sharepath directory \"" SHAREPATH "\" to search path");
@@ -510,8 +510,7 @@ int PHYSFSX_exists_ignorecase(const char *filename)
 {
 	char filename2[PATH_MAX];
 	snprintf(filename2, sizeof(filename2), "%s", filename);
-	PHYSFSEXT_locateCorrectCase(filename2);
-	return PHYSFS_exists(filename2);
+	return !PHYSFSEXT_locateCorrectCase(filename2);
 }
 
 //Open a file for reading, set up a buffer

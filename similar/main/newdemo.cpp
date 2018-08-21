@@ -396,7 +396,7 @@ static void nd_write_shortpos(const vcobjptr_t obj)
 	shortpos sp;
 	ubyte render_type;
 
-	create_shortpos_native(&sp, obj);
+	create_shortpos_native(vcsegptr, vcvertptr, &sp, obj);
 
 	render_type = obj->render_type;
 	if (((render_type == RT_POLYOBJ) || (render_type == RT_HOSTAGE) || (render_type == RT_MORPH)) || (obj->type == OBJ_CAMERA)) {
@@ -1579,10 +1579,9 @@ void newdemo_set_new_level(int level_num)
 			nd_write_byte (w.flags);
 			nd_write_byte (w.state);
 
-			int side = w.sidenum;
-			segment *seg = &Segments[w.segnum];
-			nd_write_short (seg->sides[side].tmap_num);
-			nd_write_short (seg->sides[side].tmap_num2);
+			const auto &side = vcsegptr(w.segnum)->sides[w.sidenum];
+			nd_write_short (side.tmap_num);
+			nd_write_short (side.tmap_num2);
 			nd_record_v_juststarted=0;
 		}
 	}
@@ -1728,8 +1727,8 @@ static int newdemo_read_demo_start(enum purpose_type purpose)
 
 		range_for (auto &i, Players)
 		{
-			const auto &&objp = vmobjptr(i.objnum);
-			auto &player_info = objp->ctype.player_info;
+			auto &objp = *vmobjptr(i.objnum);
+			auto &player_info = objp.ctype.player_info;
 			player_info.powerup_flags &= ~(PLAYER_FLAGS_CLOAKED | PLAYER_FLAGS_INVULNERABLE);
 			DXX_MAKE_VAR_UNDEFINED(player_info.cloak_time);
 			DXX_MAKE_VAR_UNDEFINED(player_info.invulnerable_time);
@@ -1849,7 +1848,8 @@ static int newdemo_read_demo_start(enum purpose_type purpose)
 #if defined(DXX_BUILD_DESCENT_I)
 	if (!shareware)
 	{
-		if ((purpose != PURPOSE_REWRITE) && !load_mission_by_name(current_mission)) {
+		if ((purpose != PURPOSE_REWRITE) && load_mission_by_name(current_mission))
+		{
 			if (purpose == PURPOSE_CHOSE_PLAY) {
 				nm_messagebox( NULL, 1, TXT_OK, TXT_NOMISSION4DEMO, current_mission );
 			}
@@ -1857,7 +1857,8 @@ static int newdemo_read_demo_start(enum purpose_type purpose)
 		}
 	}
 #elif defined(DXX_BUILD_DESCENT_II)
-	if (!load_mission_by_name(current_mission)) {
+	if (load_mission_by_name(current_mission))
+	{
 		if (purpose != PURPOSE_RANDOM_PLAY) {
 			nm_messagebox( NULL, 1, TXT_OK, TXT_NOMISSION4DEMO, current_mission );
 		}
@@ -1947,8 +1948,8 @@ static void newdemo_pop_ctrlcen_triggers()
 			 */
 			continue;
 		}
-		const auto &&csegp = vmsegptr(csegi);
-		auto cside = find_connect_side(seg, csegp);
+		auto &csegp = *vmsegptr(csegi);
+		const auto cside = find_connect_side(seg, csegp);
 		const auto wall_num = seg->sides[side].wall_num;
 		if (wall_num == wall_none)
 		{
@@ -1964,7 +1965,7 @@ static void newdemo_pop_ctrlcen_triggers()
 		const auto t = WallAnims[anim_num].flags & WCF_TMAP1
 			? &side::tmap_num
 			: &side::tmap_num2;
-		seg->sides[side].*t = csegp->sides[cside].*t = WallAnims[anim_num].frames[n-1];
+		seg->sides[side].*t = csegp.sides[cside].*t = WallAnims[anim_num].frames[n-1];
 	}
 }
 
@@ -2188,7 +2189,7 @@ static int newdemo_read_frame_information(int rewrite)
 				}
 				auto objnum = newdemo_find_object(object_signature_t{static_cast<uint16_t>(signature)});
 				if ( objnum != object_none && Newdemo_vcr_state == ND_STATE_PLAYBACK)  {   //  @mk, 2/22/96, John told me to.
-					digi_link_sound_to_object3( soundno, objnum, 1, max_volume, vm_distance{max_distance}, loop_start, loop_end );
+					digi_link_sound_to_object3(soundno, objnum, 1, max_volume, sound_stack::allow_stacking, vm_distance{max_distance}, loop_start, loop_end);
 				}
 			}
 			break;
@@ -3188,28 +3189,17 @@ static int newdemo_read_frame_information(int rewrite)
 					nd_read_byte(&w.flags);
 					nd_read_byte(&w.state);
 
-					segment *seg;
-					int side;
-					if (rewrite)	// hack some dummy variables
-					{
-						seg = &Segments.front();
-						side = 0;
-					}
-					else
-					{
-						seg = &Segments[w.segnum];
-						side = w.sidenum;
-					}
-					nd_read_short (&seg->sides[side].tmap_num);
-					nd_read_short (&seg->sides[side].tmap_num2);
+					auto &side = vmsegptr(w.segnum)->sides[w.sidenum];
+					nd_read_short (&side.tmap_num);
+					nd_read_short (&side.tmap_num2);
 
 					if (rewrite)
 					{
 						nd_write_byte (w.type);
 						nd_write_byte (w.flags);
 						nd_write_byte (w.state);
-						nd_write_short (seg->sides[side].tmap_num);
-						nd_write_short (seg->sides[side].tmap_num2);
+						nd_write_short (side.tmap_num);
+						nd_write_short (side.tmap_num2);
 					}
 				}
 

@@ -83,7 +83,7 @@ static void texpage_print_name(d_fname name)
 	name.back() = 0;
 	
     gr_set_current_canvas( TmapnameCanvas );
-    gr_string(*grd_curcanv, 0, 0, name);			  
+    gr_string(*grd_curcanv, *grd_curcanv->cv_font, 0, 0, name);			  
 }
 
 //Redraw the list of textures, based on TexturePage
@@ -229,8 +229,6 @@ int texpage_do(const d_event &event)
 		gr_set_fontcolor(*grd_curcanv, CBLACK, CWHITE);
 		
 		texpage_redraw();
-		
-		gr_set_curfont(*grd_curcanv, editor_font);
 		
 		// Don't reset the current tmap every time we go back to the editor.
 		//	CurrentTexture = TexturePage*TMAPS_PER_PAGE;

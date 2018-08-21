@@ -55,168 +55,7 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 int	Do_duplicate_vertex_check = 0;		// Gets set to 1 in med_create_duplicate_vertex, means to check for duplicate vertices in compress_mine
 
-#define	BOTTOM_STUFF	0
-
 //	Remap all vertices in polygons in a segment through translation table xlate_verts.
-#if BOTTOM_STUFF
-void remap_vertices(segment *segp, int *xlate_verts)
-{
-	int	sidenum, facenum, polynum, v;
-
-	for (sidenum=0; sidenum<MAX_SIDES_PER_SEGMENT; sidenum++)
-		for (facenum=0; facenum<segp->sides[sidenum].num_faces; facenum++)
-			for (polynum=0; polynum<segp->sides[sidenum].faces[facenum].num_polys; polynum++) {
-				poly *pp = &segp->sides[sidenum].faces[facenum].polys[polynum];
-				for (v=0; v<pp->num_vertices; v++)
-					pp->verts[v] = xlate_verts[pp->verts[v]];
-			}
-}
-
-//	[side] [index] [cur:next]
-//	To remap the vertices on a side after a forward rotation
-const array<array<array<uint8_t, 2>, 4>, 6> xlate_previous{
-{ {7, 3}, {3, 2}, {2, 6}, {6, 7} },		// remapping left to left
-{ {5, 4}, {4, 0}, {7, 3}, {6, 7} },		// remapping back to top
-{ {5, 4}, {1, 5}, {0, 1}, {4, 0} },		// remapping right to right
-{ {0, 1}, {1, 5}, {2, 6}, {3, 2} },		//	remapping front to bottom
-{ {1, 5}, {5, 4}, {6, 7}, {2, 6} },		// remapping bottom to back
-{ {4, 0}, {0, 1}, {3, 2}, {7, 3} },		// remapping top to front
-};
-
-void remap_vertices_previous(segment *segp, int sidenum)
-{
-	int	v, w, facenum, polynum;
-
-	for (facenum=0; facenum<segp->sides[sidenum].num_faces; facenum++) {
-		for (polynum=0; polynum<segp->sides[sidenum].faces[facenum].num_polys; polynum++) {
-			poly *pp = &segp->sides[sidenum].faces[facenum].polys[polynum];
-
-			for (v=0; v<pp->num_vertices; v++) {
-				for (w=0; w<4; w++) {
-					if (pp->verts[v] == xlate_previous[sidenum][w][0]) {
-						pp->verts[v] = xlate_previous[sidenum][w][1];
-						break;
-					}
-				}
-				Assert(w<4);	// If w == 4, then didn't find current vertex in list, which means xlate_previous table is bogus
-			}
-		}
-	}
-}
-
-const array<array<array<uint8_t, 2>, 4>, 6> xlate_previous_right{
-{ {5, 6}, {6, 7}, {2, 3}, {1, 2} },		// bottom to left
-{ {6, 7}, {7, 4}, {3, 0}, {2, 3} },		// left to top
-{ {7, 4}, {4, 5}, {0, 1}, {3, 0} },		// top to right
-{ {4, 5}, {5, 6}, {1, 2}, {0, 1} },		// right to bottom
-{ {6, 7}, {5, 6}, {4, 5}, {7, 4} },		// back to back
-{ {3, 2}, {0, 3}, {1, 0}, {2, 1} },		// front to front
-};
-
-void remap_vertices_previous_right(segment *segp, int sidenum)
-{
-	int	v, w, facenum, polynum;
-
-	for (facenum=0; facenum<segp->sides[sidenum].num_faces; facenum++) {
-		for (polynum=0; polynum<segp->sides[sidenum].faces[facenum].num_polys; polynum++) {
-			poly *pp = &segp->sides[sidenum].faces[facenum].polys[polynum];
-
-			for (v=0; v<pp->num_vertices; v++) {
-				for (w=0; w<4; w++) {
-					if (pp->verts[v] == xlate_previous_right[sidenum][w][0]) {
-						pp->verts[v] = xlate_previous_right[sidenum][w][1];
-						break;
-					}
-				}
-				Assert(w<4);	// If w == 4, then didn't find current vertex in list, which means xlate_previous table is bogus
-			}
-		}
-	}
-}
-
-
-// -----------------------------------------------------------------------------------
-//	Takes top to front
-void med_rotate_segment_forward(segment *segp)
-{
-	segment	seg_copy;
-	int		i;
-
-	seg_copy = *segp;
-
-	seg_copy.verts[0] = segp->verts[4];
-	seg_copy.verts[1] = segp->verts[0];
-	seg_copy.verts[2] = segp->verts[3];
-	seg_copy.verts[3] = segp->verts[7];
-	seg_copy.verts[4] = segp->verts[5];
-	seg_copy.verts[5] = segp->verts[1];
-	seg_copy.verts[6] = segp->verts[2];
-	seg_copy.verts[7] = segp->verts[6];
-
-	seg_copy.children[WFRONT] = segp->children[WTOP];
-	seg_copy.children[WTOP] = segp->children[WBACK];
-	seg_copy.children[WBACK] = segp->children[WBOTTOM];
-	seg_copy.children[WBOTTOM] = segp->children[WFRONT];
-
-	seg_copy.sides[WFRONT] = segp->sides[WTOP];
-	seg_copy.sides[WTOP] = segp->sides[WBACK];
-	seg_copy.sides[WBACK] = segp->sides[WBOTTOM];
-	seg_copy.sides[WBOTTOM] = segp->sides[WFRONT];
-
-	for (i=0; i<6; i++)
-		remap_vertices_previous(&seg_copy, i);
-
-	*segp = seg_copy;
-}
-
-// -----------------------------------------------------------------------------------
-//	Takes top to right
-void med_rotate_segment_right(segment *segp)
-{
-	segment	seg_copy;
-	int		i;
-
-	seg_copy = *segp;
-
-	seg_copy.verts[4] = segp->verts[7];
-	seg_copy.verts[5] = segp->verts[4];
-	seg_copy.verts[1] = segp->verts[0];
-	seg_copy.verts[0] = segp->verts[3];
-	seg_copy.verts[3] = segp->verts[2];
-	seg_copy.verts[2] = segp->verts[1];
-	seg_copy.verts[6] = segp->verts[5];
-	seg_copy.verts[7] = segp->verts[6];
-
-	seg_copy.children[WRIGHT] = segp->children[WTOP];
-	seg_copy.children[WBOTTOM] = segp->children[WRIGHT];
-	seg_copy.children[WLEFT] = segp->children[WBOTTOM];
-	seg_copy.children[WTOP] = segp->children[WLEFT];
-
-	seg_copy.sides[WRIGHT] = segp->sides[WTOP];
-	seg_copy.sides[WBOTTOM] = segp->sides[WRIGHT];
-	seg_copy.sides[WLEFT] = segp->sides[WBOTTOM];
-	seg_copy.sides[WTOP] = segp->sides[WLEFT];
-
-	for (i=0; i<6; i++)
-		remap_vertices_previous_right(&seg_copy, i);
-
-	*segp = seg_copy;
-}
-
-void make_curside_bottom_side(void)
-{
-	switch (Curside) {
-		case WRIGHT:	med_rotate_segment_right(Cursegp);		break;
-		case WTOP:		med_rotate_segment_right(Cursegp);		med_rotate_segment_right(Cursegp);		break;
-		case WLEFT:		med_rotate_segment_right(Cursegp);		med_rotate_segment_right(Cursegp);		med_rotate_segment_right(Cursegp);		break;
-		case WBOTTOM:	break;
-		case WFRONT:	med_rotate_segment_forward(Cursegp);	break;
-		case WBACK:		med_rotate_segment_forward(Cursegp);	med_rotate_segment_forward(Cursegp);	med_rotate_segment_forward(Cursegp);	break;
-	}
-	Update_flags = UF_WORLD_CHANGED;
-}
-#endif
-
 int ToggleBottom(void)
 {
 	Render_only_bottom = !Render_only_bottom;
@@ -481,7 +320,7 @@ void make_orthogonal(vms_matrix *rmat,vms_matrix *smat)
 // Do this by extracting the forward, right, up vectors and then making them orthogonal.
 // In the process of making the vectors orthogonal, favor them in the order forward, up, right.
 // This means that the forward vector will remain unchanged.
-void med_extract_matrix_from_segment(const vcsegptr_t sp,vms_matrix *rotmat)
+void med_extract_matrix_from_segment(const shared_segment &sp, vms_matrix &rotmat)
 {
 	vms_vector	forwardvec,upvec;
 
@@ -489,12 +328,12 @@ void med_extract_matrix_from_segment(const vcsegptr_t sp,vms_matrix *rotmat)
 	extract_up_vector_from_segment(sp,upvec);
 
 	if (((forwardvec.x == 0) && (forwardvec.y == 0) && (forwardvec.z == 0)) || ((upvec.x == 0) && (upvec.y == 0) && (upvec.z == 0))) {
-		*rotmat = vmd_identity_matrix;
+		rotmat = vmd_identity_matrix;
 		return;
 	}
 
 
-	vm_vector_2_matrix(*rotmat,forwardvec,&upvec,nullptr);
+	vm_vector_2_matrix(rotmat, forwardvec, &upvec, nullptr);
 
 #if 0
 	vms_matrix	rm;
@@ -817,11 +656,11 @@ static int med_attach_segment_rotated(const vmsegptridx_t destseg, const vmsegpt
 	// to back of the original *newseg.
 
 	// Do lots of hideous matrix stuff, about 3/4 of which could probably be simplified out.
-	med_extract_matrix_from_segment(destseg,&rotmat);		// get orientation matrix for destseg (orthogonal rotation matrix)
+	med_extract_matrix_from_segment(destseg, rotmat);		// get orientation matrix for destseg (orthogonal rotation matrix)
 	update_matrix_based_on_side(rotmat,destside);
 	const auto rotmat1 = vm_vector_2_matrix(forvec,&upvec,nullptr);
 	const auto rotmat4 = vm_matrix_x_matrix(rotmat,rotmat1);			// this is the desired orientation of the new segment
-	med_extract_matrix_from_segment(newseg,&rotmat3);		// this is the current orientation of the new segment
+	med_extract_matrix_from_segment(newseg, rotmat3);		// this is the current orientation of the new segment
 	vm_transpose_matrix(rotmat3);								// get the inverse of the current orientation matrix
 	vm_matrix_x_matrix(rotmat2,rotmat4,rotmat3);			// now rotmat2 takes the current segment to the desired orientation
 
@@ -1495,7 +1334,7 @@ void create_coordinate_axes_from_segment(const vmsegptr_t sp, array<unsigned, 16
 	vms_matrix	rotmat;
 	vms_vector t;
 
-	med_extract_matrix_from_segment(sp,&rotmat);
+	med_extract_matrix_from_segment(sp, rotmat);
 
 	const auto &&v0 = vmvertptr(vertnums[0]);
 	compute_segment_center(vcvertptr, v0, sp);

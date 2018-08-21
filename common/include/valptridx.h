@@ -11,9 +11,9 @@
 #include <type_traits>
 #include "fwd-valptridx.h"
 #include "compiler-array.h"
-#include "compiler-static_assert.h"
 #include "pack.h"
 #include "compiler-poison.h"
+#include "selfiter.h"
 
 #ifdef DXX_CONSTANT_TRUE
 #define DXX_VALPTRIDX_STATIC_CHECK(SUCCESS_CONDITION,FAILURE_FUNCTION,FAILURE_STRING)	\
@@ -328,8 +328,10 @@ public:
 	idx() = delete;
 	idx(const idx &) = default;
 	idx(idx &&) = default;
-	idx &operator=(const idx &) = default;
-	idx &operator=(idx &&) = default;
+	idx &operator=(const idx &) & = default;
+	idx &operator=(idx &&) & = default;
+	idx &operator=(const idx &) && = delete;
+	idx &operator=(idx &&) && = delete;
 
 	index_type get_unchecked_index() const { return m_idx; }
 
@@ -353,7 +355,7 @@ public:
 		 * right hand side must be saved and checked for validity before
 		 * being used to initialize a require_valid type.
 		 */
-		static_assert(allow_nullptr || !rhs.allow_nullptr, "cannot move from allow_invalid to require_valid");
+		static_assert(policy::allow_nullptr || !rpolicy::allow_nullptr, "cannot move from allow_invalid to require_valid");
 	}
 	idx(index_type i DXX_VALPTRIDX_REPORT_STANDARD_LEADER_COMMA_L_DECL_VARS) :
 		m_idx(check_allowed_invalid_index(i) ? i : check_index_range<index_range_error_type<array_managed_type>>(DXX_VALPTRIDX_REPORT_STANDARD_LEADER_COMMA_R_PASS_VARS i, nullptr))
@@ -440,8 +442,10 @@ public:
 	/* Override template matches to make same-type copy/move trivial */
 	ptr(const ptr &) = default;
 	ptr(ptr &&) = default;
-	ptr &operator=(const ptr &) = default;
-	ptr &operator=(ptr &&) = default;
+	ptr &operator=(const ptr &) & = default;
+	ptr &operator=(ptr &&) & = default;
+	ptr &operator=(const ptr &) && = delete;
+	ptr &operator=(ptr &&) && = delete;
 
 	pointer_type get_unchecked_pointer() const { return m_ptr; }
 	pointer_type get_nonnull_pointer(DXX_VALPTRIDX_REPORT_STANDARD_LEADER_COMMA_N_DECL_VARS) const
@@ -489,7 +493,7 @@ public:
 		 * right hand side must be saved and checked for validity before
 		 * being used to initialize a require_valid type.
 		 */
-		static_assert(allow_nullptr || !rhs.allow_nullptr, "cannot move from allow_invalid to require_valid");
+		static_assert(policy::allow_nullptr || !rpolicy::allow_nullptr, "cannot move from allow_invalid to require_valid");
 	}
 	ptr(index_type i) = delete;
 	ptr(DXX_VALPTRIDX_REPORT_STANDARD_LEADER_COMMA_R_DEFN_VARS index_type i, array_managed_type &a) :
@@ -623,8 +627,10 @@ public:
 	using vptr_type::operator==;
 	ptridx(const ptridx &) = default;
 	ptridx(ptridx &&) = default;
-	ptridx &operator=(const ptridx &) = default;
-	ptridx &operator=(ptridx &&) = default;
+	ptridx &operator=(const ptridx &) & = default;
+	ptridx &operator=(ptridx &&) & = default;
+	ptridx &operator=(const ptridx &) && = delete;
+	ptridx &operator=(ptridx &&) && = delete;
 	ptridx(std::nullptr_t) = delete;
 	/* Prevent implicit conversion.  Require use of the factory function.
 	 */
@@ -961,20 +967,7 @@ protected:
 	using basic_ival_member_factory<Pc, Pm>::get_array;
 	using basic_ival_member_factory<Pc, Pm>::call_operator;
 	template <typename P>
-	struct iterator :
-		std::iterator<std::forward_iterator_tag, P>,
-		P
-	{
-		using P::operator++;
-		iterator(P &&i) :
-			P(static_cast<P &&>(i))
-		{
-		}
-		P operator*() const
-		{
-			return *this;
-		}
-	};
+		using iterator = self_return_iterator<P>;
 	template <typename P, typename policy, typename A>
 		static P call_operator(DXX_VALPTRIDX_REPORT_STANDARD_LEADER_COMMA_R_DEFN_VARS const valptridx<managed_type>::idx<policy, 0> i, A &a)
 		{

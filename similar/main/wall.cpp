@@ -132,9 +132,9 @@ struct find_cloaked_wall_predicate
 }
 #endif
 
-static std::pair<uint_fast32_t, uint_fast32_t> get_transparency_check_values(const side &side)
+static std::pair<uint_fast32_t, uint_fast32_t> get_transparency_check_values(const unique_side &side)
 {
-	if (uint_fast32_t masked_tmap_num2 = side.tmap_num2 & 0x3FFF)
+	if (const uint_fast32_t masked_tmap_num2 = side.tmap_num2 & 0x3FFF)
 		return {masked_tmap_num2, BM_FLAG_SUPER_TRANSPARENT};
 	return {side.tmap_num, BM_FLAG_TRANSPARENT};
 }
@@ -142,9 +142,9 @@ static std::pair<uint_fast32_t, uint_fast32_t> get_transparency_check_values(con
 // This function determines whether the current segment/side is transparent
 //		1 = YES
 //		0 = NO
-static uint_fast32_t check_transparency(const side &side)
+static uint_fast32_t check_transparency(const GameBitmaps_array &GameBitmaps, const Textures_array &Textures, const unique_side &side)
 {
-	auto v = get_transparency_check_values(side);
+	const auto &&v = get_transparency_check_values(side);
 	return GameBitmaps[Textures[v.first].index].get_flag_mask(v.second);
 }
 
@@ -162,9 +162,10 @@ static uint_fast32_t check_transparency(const side &side)
 //		WID_TRANSILLUSORY_WALL	7	//	1/1/1		transparent illusory wall
 //		WID_NO_WALL					5	//	1/0/1		no wall, can fly through
 namespace dsx {
-WALL_IS_DOORWAY_result_t wall_is_doorway(const side &side)
+
+WALL_IS_DOORWAY_result_t wall_is_doorway(const GameBitmaps_array &GameBitmaps, const Textures_array &Textures, fvcwallptr &vcwallptr, const shared_side &sside, const unique_side &uside)
 {
-	auto &w = *vcwallptr(side.wall_num);
+	auto &w = *vcwallptr(sside.wall_num);
 	const auto type = w.type;
 	if (type == WALL_OPEN)
 		return WID_NO_WALL;
@@ -179,7 +180,7 @@ WALL_IS_DOORWAY_result_t wall_is_doorway(const side &side)
 		if (flags & WALL_ILLUSION_OFF)
 			return WID_NO_WALL;
 		else {
-			if (check_transparency(side))
+			if (check_transparency(GameBitmaps, Textures, uside))
 				return WID_TRANSILLUSORY_WALL;
 		 	else
 				return WID_ILLUSORY_WALL;
@@ -189,17 +190,16 @@ WALL_IS_DOORWAY_result_t wall_is_doorway(const side &side)
 	if (type == WALL_BLASTABLE) {
 	 	if (flags & WALL_BLASTED)
 			return WID_TRANSILLUSORY_WALL;
-		if (check_transparency(side))
-			return WID_TRANSPARENT_WALL;
-		else
-			return WID_WALL;
 	}	
+	else
+	{
 	if (unlikely(flags & WALL_DOOR_OPENED))
 		return WID_TRANSILLUSORY_WALL;
 	if (likely(type == WALL_DOOR) && unlikely(w.state == WALL_DOOR_OPENING))
 		return WID_TRANSPARENT_WALL;
+	}
 // If none of the above flags are set, there is no doorway.
-	if (check_transparency(side))
+	if (check_transparency(GameBitmaps, Textures, uside))
 		return WID_TRANSPARENT_WALL;
 	else
 		return WID_WALL; // There are children behind the door.
@@ -212,6 +212,7 @@ WALL_IS_DOORWAY_result_t wall_is_doorway(const side &side)
 namespace dsx {
 void wall_init()
 {
+	init_exploding_walls();
 	Walls.set_count(0);
 	range_for (auto &w, Walls)
 	{
@@ -234,18 +235,18 @@ void wall_init()
 #endif
 
 //set the tmap_num or tmap_num2 field for a wall/door
-void wall_set_tmap_num(const vmsegptridx_t seg,int side,const vmsegptridx_t csegp,int cside,int anim_num,int frame_num)
+void wall_set_tmap_num(const wclip &anim, const vmsegptridx_t seg, const unsigned side, const vmsegptridx_t csegp, const unsigned cside, const unsigned frame_num)
 {
-	wclip *anim = &WallAnims[anim_num];
-	int tmap = anim->frames[frame_num];
+	const auto newdemo_state = Newdemo_state;
+	if (newdemo_state == ND_STATE_PLAYBACK)
+		return;
 
-	if ( Newdemo_state==ND_STATE_PLAYBACK ) return;
-
-	if (anim->flags & WCF_TMAP1)	{
+	const auto tmap = anim.frames[frame_num];
+	if (anim.flags & WCF_TMAP1)	{
 		if (tmap != seg->sides[side].tmap_num || tmap != csegp->sides[cside].tmap_num)
 		{
 			seg->sides[side].tmap_num = csegp->sides[cside].tmap_num = tmap;
-			if ( Newdemo_state == ND_STATE_RECORDING )
+			if (newdemo_state == ND_STATE_RECORDING)
 				newdemo_record_wall_set_tmap_num1(seg,side,csegp,cside,tmap);
 		}
 	} else	{
@@ -253,7 +254,7 @@ void wall_set_tmap_num(const vmsegptridx_t seg,int side,const vmsegptridx_t cseg
 		if (tmap != seg->sides[side].tmap_num2 || tmap != csegp->sides[cside].tmap_num2)
 		{
 			seg->sides[side].tmap_num2 = csegp->sides[cside].tmap_num2 = tmap;
-			if ( Newdemo_state == ND_STATE_RECORDING )
+			if (newdemo_state == ND_STATE_RECORDING)
 				newdemo_record_wall_set_tmap_num2(seg,side,csegp,cside,tmap);
 		}
 	}
@@ -272,22 +273,22 @@ static void blast_blastable_wall(const vmsegptridx_t seg, int side)
 	Assert(Connectside != side_none);
 	const auto cwall_num = csegp->sides[Connectside].wall_num;
 	const auto &&w1 = imwallptr(cwall_num);
-	kill_stuck_objects(seg->sides[side].wall_num);
 	if (w1)
-		kill_stuck_objects(cwall_num);
+		LevelUniqueStuckObjectState.kill_stuck_objects(vmobjptr, cwall_num);
+	LevelUniqueStuckObjectState.kill_stuck_objects(vmobjptr, seg->sides[side].wall_num);
 	flush_fcd_cache();
 
 	const auto a = w0.clip_num;
 	//if this is an exploding wall, explode it
 	if (WallAnims[a].flags & WCF_EXPLODES)
-		explode_wall(seg,side);
+		explode_wall(vcvertptr, seg, side, w0);
 	else {
 		//if not exploding, set final frame, and make door passable
 		const auto n = WallAnims[a].num_frames;
 		w0.flags |= WALL_BLASTED;
 		if (w1)
 			w1->flags |= WALL_BLASTED;
-		wall_set_tmap_num(seg,side,csegp,Connectside,a,n-1);
+		wall_set_tmap_num(WallAnims[a], seg, side, csegp, Connectside, n - 1);
 	}
 
 }
@@ -324,8 +325,11 @@ void wall_damage(const vmsegptridx_t seg, int side, fix damage)
 		auto Connectside = find_connect_side(seg, csegp);
 		Assert(Connectside != side_none);
 		const auto cwall_num = csegp->sides[Connectside].wall_num;
-		if (const auto &&w1 = imwallptr(cwall_num))
-			w1->hps -= damage;
+		if (const auto &&w1p = imwallptr(cwall_num))
+		{
+			auto &w1 = *w1p;
+			w1.hps -= damage;
+		}
 		w0.hps -= damage;
 
 		const auto a = w0.clip_num;
@@ -340,7 +344,7 @@ void wall_damage(const vmsegptridx_t seg, int side, fix damage)
 			for (i=0;i<n;i++)
 				if (w0.hps < WALL_HPS*(n-i)/n)
 				{
-					wall_set_tmap_num(seg,side,csegp,Connectside,a,i);
+					wall_set_tmap_num(WallAnims[a], seg, side, csegp, Connectside, i);
 				}
 		}
 }
@@ -355,7 +359,7 @@ void wall_open_door(const vmsegptridx_t seg, int side)
 
 	const auto wall_num = seg->sides[side].wall_num;
 	wall *const w = vmwallptr(wall_num);
-	//kill_stuck_objects(seg->sides[side].wall_num);
+	LevelUniqueStuckObjectState.kill_stuck_objects(vmobjptr, seg->sides[side].wall_num);
 
 	if ((w->state == WALL_DOOR_OPENING) ||		//already opening
 		 (w->state == WALL_DOOR_WAITING))		//open, waiting to close
@@ -377,7 +381,7 @@ void wall_open_door(const vmsegptridx_t seg, int side)
 		}
 		else
 		{
-			d = i;
+			d = *i;
 			d->time = WallAnims[w->clip_num].play_time - d->time;
 			if (d->time < 0)
 				d->time = 0;
@@ -476,7 +480,7 @@ void start_wall_cloak(const vmsegptridx_t seg, int side)
 			d_debugbreak();
 			return;
 		}
-		d = i;
+		d = *i;
 		d->time = CLOAKING_WALL_TIME - d->time;
 	}
 	else if (w->state == WALL_DOOR_CLOSED) {	//create new door
@@ -545,7 +549,7 @@ void start_wall_decloak(const vmsegptridx_t seg, int side)
 			d_debugbreak();
 			return;
 		}
-		d = i;
+		d = *i;
 		d->time = CLOAKING_WALL_TIME - d->time;
 	}
 	else if (w->state == WALL_DOOR_CLOSED) {	//create new door
@@ -623,47 +627,46 @@ void wall_close_door_ref(active_door &d)
 		if (const auto &&w1 = imwallptr(cwall_num))
 			w1->state = WALL_DOOR_CLOSED;
 
-		wall_set_tmap_num(seg,side,csegp,Connectside,w->clip_num,0);
+		wall_set_tmap_num(WallAnims[w->clip_num], seg, side, csegp, Connectside, 0);
 	}
 }
 
-static uint8_t check_poke(const vcobjptr_t obj, const vcsegptr_t segnum,int side)
+static unsigned check_poke(fvcvertptr &vcvertptr, const object_base &obj, const shared_segment &seg, const unsigned side)
 {
 	//note: don't let objects with zero size block door
-	if (!obj->size)
+	if (!obj.size)
 		return 0;
-	return get_seg_masks(vcvertptr, obj->pos, segnum, obj->size).sidemask & (1 << side);		//pokes through side!
+	return get_seg_masks(vcvertptr, obj.pos, seg, obj.size).sidemask & (1 << side);		//pokes through side!
 }
 
 namespace dsx {
-static int is_door_side_free(const vcsegptr_t seg, int side)
+static unsigned is_door_side_obstructed(fvcobjptridx &vcobjptridx, fvcsegptr &vcsegptr, const vcsegptr_t seg, const unsigned side)
 {
-	range_for (const auto &&obj, objects_in(seg, vcobjptridx, vcsegptr))
+	range_for (const object_base &obj, objects_in(seg, vcobjptridx, vcsegptr))
 	{
 #if defined(DXX_BUILD_DESCENT_II)
-		if (obj->type == OBJ_WEAPON)
+		if (obj.type == OBJ_WEAPON)
 			continue;
-		if (obj->type == OBJ_FIREBALL)
+		if (obj.type == OBJ_FIREBALL)
 			continue;
 #endif
-		if (check_poke(obj,seg,side))
-			return 0;	//not free
+		if (const auto obstructed = check_poke(vcvertptr, obj, seg, side))
+			return obstructed;
 	}
-	return 1;
-}
+	return 0;
 }
 
-//returns true of door in unobjstructed (& thus can close)
-static int is_door_free(const vcsegptridx_t seg,int side)
+//returns true if door is obstructed (& thus cannot close)
+static unsigned is_door_obstructed(fvcobjptridx &vcobjptridx, fvcsegptr &vcsegptr, const vcsegptridx_t seg, const unsigned side)
 {
-	if (!is_door_side_free(seg, side))
-		return 0;
+	if (const auto obstructed = is_door_side_obstructed(vcobjptridx, vcsegptr, seg, side))
+		return obstructed;
 	const auto &&csegp = vcsegptr(seg->children[side]);
 	const auto &&Connectside = find_connect_side(seg, csegp);
 	Assert(Connectside != side_none);
 	//go through each object in each of two segments, and see if
 	//it pokes into the connecting seg
-	return is_door_side_free(csegp, Connectside);
+	return is_door_side_obstructed(vcobjptridx, vcsegptr, csegp, Connectside);
 }
 
 #if defined(DXX_BUILD_DESCENT_II)
@@ -680,7 +683,7 @@ void wall_close_door(const vmsegptridx_t seg, int side)
 		 (w->state == WALL_DOOR_CLOSED))			//closed
 		return;
 
-	if (!is_door_free(seg,side))
+	if (is_door_obstructed(vcobjptridx, vcsegptr, seg, side))
 		return;
 
 	if (w->state == WALL_DOOR_OPENING) {	//reuse door
@@ -691,7 +694,7 @@ void wall_close_door(const vmsegptridx_t seg, int side)
 			d_debugbreak();
 			return;
 		}
-		d = i;
+		d = *i;
 		d->time = WallAnims[w->clip_num].play_time - d->time;
 
 		if (d->time < 0)
@@ -744,7 +747,6 @@ void wall_close_door(const vmsegptridx_t seg, int side)
 //-----------------------------------------------------------------
 // Animates opening of a door.
 // Called in the game loop.
-namespace dsx {
 static bool do_door_open(active_door &d)
 {
 	bool remove = false;
@@ -754,9 +756,9 @@ static bool do_door_open(active_door &d)
 		fix time_elapsed, time_total, one_frame;
 		int i;
 
+		LevelUniqueStuckObjectState.kill_stuck_objects(vmobjptr, d.front_wallnum[p]);
+		LevelUniqueStuckObjectState.kill_stuck_objects(vmobjptr, d.back_wallnum[p]);
 		wall *const w = vmwallptr(d.front_wallnum[p]);
-		kill_stuck_objects(d.front_wallnum[p]);
-		kill_stuck_objects(d.back_wallnum[p]);
 
 		const auto &&seg = vmsegptridx(w->segnum);
 		side = w->sidenum;
@@ -783,7 +785,7 @@ static bool do_door_open(active_door &d)
 		i = time_elapsed/one_frame;
 
 		if (i < n)
-			wall_set_tmap_num(seg,side,csegp,Connectside,w->clip_num,i);
+			wall_set_tmap_num(WallAnims[w->clip_num], seg, side, csegp, Connectside, i);
 
 		const auto cwall_num = csegp->sides[Connectside].wall_num;
 		const auto &&w1 = vmwallptr(cwall_num);
@@ -793,7 +795,7 @@ static bool do_door_open(active_door &d)
 		}
 
 		if (i >= n-1) {
-			wall_set_tmap_num(seg,side,csegp,Connectside,w->clip_num,n-1);
+			wall_set_tmap_num(WallAnims[w->clip_num], seg, side, csegp, Connectside, n - 1);
 
 			// If our door is not automatic just remove it from the list.
 			if (!(w->flags & WALL_DOOR_AUTO)) {
@@ -825,7 +827,8 @@ static bool do_door_close(active_door &d)
 
 	//check for objects in doorway before closing
 	if (w0.flags & WALL_DOOR_AUTO)
-		if (!is_door_free(wsegp, w0.sidenum)) {
+		if (is_door_obstructed(vcobjptridx, vcsegptr, wsegp, w0.sidenum))
+		{
 #if defined(DXX_BUILD_DESCENT_II)
 			digi_kill_sound_linked_to_segment(w0.segnum, w0.sidenum, -1);
 			wall_open_door(wsegp, w0.sidenum);		//re-open door
@@ -897,7 +900,7 @@ static bool do_door_close(active_door &d)
 
 		// Animate door.
 		if (i > 0) {
-			wall_set_tmap_num(seg, side, csegp, Connectside, wp.clip_num, i);
+			wall_set_tmap_num(WallAnims[wp.clip_num], seg, side, csegp, Connectside, i);
 
 			wp.state = WALL_DOOR_CLOSING;
 			w1.state = WALL_DOOR_CLOSING;
@@ -1089,21 +1092,6 @@ void wall_toggle(const vmsegptridx_t segp, unsigned side)
 		wall_open_door(segp, side);
 }
 
-
-//-----------------------------------------------------------------
-// Tidy up Walls array for load/save purposes.
-void reset_walls()
-{
-	range_for (auto &w, partial_range(Walls, Num_walls, MAX_WALLS))
-	{
-		w.type = WALL_NORMAL;
-		w.flags = 0;
-		w.hps = 0;
-		w.trigger = -1;
-		w.clip_num = -1;
-		}
-}
-
 bool ad_removal_predicate::operator()(active_door &d) const
 {
 	wall &w = *vmwallptr(d.front_wallnum[0]);
@@ -1119,7 +1107,7 @@ bool ad_removal_predicate::operator()(active_door &d) const
 			w1->flags |= WALL_DOOR_OPENED;
 		if (d.time > DOOR_WAIT_TIME)
 #if defined(DXX_BUILD_DESCENT_II)
-			if (is_door_free(vcsegptridx(w.segnum), w.sidenum))
+			if (!is_door_obstructed(vcobjptridx, vcsegptr, vcsegptridx(w.segnum), w.sidenum))
 #endif
 			{
 				w.state = WALL_DOOR_CLOSING;
@@ -1241,6 +1229,29 @@ bool cw_removal_predicate::operator()(cloaking_wall &d)
 namespace dsx {
 void wall_frame_process()
 {
+	if (unsigned num_exploding_walls = Num_exploding_walls)
+	{
+		range_for (auto &&wp, Walls.vmptr)
+		{
+			auto &w1 = *wp;
+			if (w1.flags & WALL_EXPLODING)
+			{
+				assert(num_exploding_walls);
+				do_exploding_wall_frame(w1);
+				if (! -- num_exploding_walls)
+				{
+					/* In debug builds, iterate over all remaining walls
+					 * to verify that none are marked as WALL_EXPLODING.
+					 */
+#ifdef NDEBUG
+					break;
+#endif
+				}
+			}
+		}
+		assert(!num_exploding_walls);
+	}
+
 	{
 		const auto &&r = partial_range(ActiveDoors, ActiveDoors.get_count());
 		auto &&i = std::remove_if(r.begin(), r.end(), ad_removal_predicate());
@@ -1256,118 +1267,107 @@ void wall_frame_process()
 	}
 #endif
 }
-}
 
-namespace dcx {
-static unsigned Num_stuck_objects;
-static array<stuckobj, 32> Stuck_objects;
-}
+d_level_unique_stuck_object_state LevelUniqueStuckObjectState;
 
 //	An object got stuck in a door (like a flare).
 //	Add global entry.
-void add_stuck_object(const vmobjptridx_t objp, const vmsegptr_t segp, int sidenum)
+void d_level_unique_stuck_object_state::add_stuck_object(fvcwallptr &vcwallptr, const vmobjptridx_t objp, const vcsegptr_t segp, const unsigned sidenum)
 {
 	const auto wallnum = segp->sides[sidenum].wall_num;
 	if (wallnum != wall_none)
 	{
-		if (vmwallptr(wallnum)->flags & WALL_BLASTED)
-			objp->flags |= OF_SHOULD_BE_DEAD;
-		range_for (auto &i, Stuck_objects)
+		if (vcwallptr(wallnum)->flags & WALL_BLASTED)
 		{
-			if (i.wallnum == wall_none)
-			{
-				i.wallnum = wallnum;
-				i.objnum = objp;
-				i.signature = objp->signature;
-				Num_stuck_objects++;
-				break;
-			}
+			objp->flags |= OF_SHOULD_BE_DEAD;
+			return;
 		}
+		if (Num_stuck_objects >= Stuck_objects.size())
+		{
+			assert(Num_stuck_objects <= Stuck_objects.size());
+			con_printf(CON_NORMAL, "%s:%u: all stuck objects are busy; terminating %hu early", __FILE__, __LINE__, objp.get_unchecked_index());
+			objp->flags |= OF_SHOULD_BE_DEAD;
+			return;
+		}
+		auto &so = Stuck_objects[Num_stuck_objects++];
+		so.wallnum = wallnum;
+		so.objnum = objp;
 	}
 }
 
-//	--------------------------------------------------------------------------------------------------
-//	Look at the list of stuck objects, clean up in case an object has gone away, but not been removed here.
-//	Removes up to one/frame.
-void remove_obsolete_stuck_objects(void)
+void d_level_unique_stuck_object_state::remove_stuck_object(const vcobjidx_t obj)
 {
-	//	Safety and efficiency code.  If no stuck objects, should never get inside the IF, but this is faster.
-	if (!Num_stuck_objects)
+	auto &&pr = partial_range(Stuck_objects, Num_stuck_objects);
+	const auto predicate = [obj](const stuckobj &so) { return so.objnum == obj; };
+	const auto i = std::find_if(pr.begin(), pr.end(), predicate);
+	if (i == pr.end())
+		/* Objects enter this function if they are able to become stuck,
+		 * without regard to whether they actually are stuck.  If the
+		 * object terminated without being stuck in a wall, then it will
+		 * not be found in Stuck_objects.
+		 */
 		return;
-	auto &s = Stuck_objects[d_tick_count % Stuck_objects.size()];
-	if (s.wallnum != wall_none)
-		if (vcwallptr(s.wallnum)->state != WALL_DOOR_CLOSED ||
-			vcobjptr(s.objnum)->signature != s.signature)
-		{
-			Num_stuck_objects--;
-			s.wallnum = wall_none;
-		}
+	/* If pr.begin() == pr.end(), then i == pr.end(), and this line
+	 * cannot be reached.
+	 *
+	 * If pr.begin() != pr.end(), then prev(pr.end()) must point to a
+	 * valid element.
+	 *
+	 * Move that valid element to the location vacated by the removed
+	 * object.  This may be a self-move if the removed object is the
+	 * last object.
+	 */
+	auto &last_element = *std::prev(pr.end());
+	static_assert(std::is_trivially_move_assignable<stuckobj>::value, "stuckobj move may require a check to prevent self-move");
+	*i = std::move(last_element);
+	DXX_POISON_VAR(last_element.wallnum, 0xcc);
+	DXX_POISON_VAR(last_element.objnum, 0xcc);
+	-- Num_stuck_objects;
 }
 
 //	----------------------------------------------------------------------------------------------------
 //	Door with wall index wallnum is opening, kill all objects stuck in it.
-namespace dsx {
-void kill_stuck_objects(const wallnum_t wallnum)
+void d_level_unique_stuck_object_state::kill_stuck_objects(fvmobjptr &vmobjptr, const vcwallidx_t wallnum)
 {
 	if (!Num_stuck_objects)
 		return;
-	unsigned n = 0;
-
-	range_for (auto &i, Stuck_objects)
+	auto &&pr = partial_range(Stuck_objects, Num_stuck_objects);
+	const auto predicate = [&vmobjptr, wallnum](const stuckobj &so)
 	{
-		if (i.wallnum == wallnum)
-		{
-			i.wallnum = wall_none;
-			const auto &&objp = vmobjptr(i.objnum);
-			if (objp->type == OBJ_WEAPON) {
+		if (so.wallnum != wallnum)
+			return false;
+		auto &obj = *vmobjptr(so.objnum);
 #if defined(DXX_BUILD_DESCENT_I)
 #define DXX_WEAPON_LIFELEFT	F1_0/4
 #elif defined(DXX_BUILD_DESCENT_II)
 #define DXX_WEAPON_LIFELEFT	F1_0/8
 #endif
-				objp->lifeleft = DXX_WEAPON_LIFELEFT;
-			}
-		}
-		else if (i.wallnum != wall_none)
-		{
-			++n;
-		}
-	}
-	Num_stuck_objects = n;
+		assert(obj.type == OBJ_WEAPON);
+		assert(obj.movement_type == MT_PHYSICS);
+		assert(obj.mtype.phys_info.flags & PF_STICK);
+		obj.lifeleft = DXX_WEAPON_LIFELEFT;
+		return true;
+	};
+	const auto i = std::remove_if(pr.begin(), pr.end(), predicate);
+	static_assert(std::is_trivially_destructible<stuckobj>::value, "stuckobj destructor not called");
+	Num_stuck_objects = std::distance(pr.begin(), i);
+	array<stuckobj, 1> empty;
+	DXX_POISON_VAR(empty, 0xcc);
+	std::fill(i, pr.end(), empty[0]);
 }
 }
 
+namespace dcx {
 // -----------------------------------------------------------------------------------
 // Initialize stuck objects array.  Called at start of level
-void init_stuck_objects(void)
+void d_level_unique_stuck_object_state::init_stuck_objects()
 {
-	range_for (auto &i, Stuck_objects)
-		i.wallnum = wall_none;
+	DXX_POISON_VAR(Stuck_objects, 0xcc);
 	Num_stuck_objects = 0;
+}
 }
 
 #if defined(DXX_BUILD_DESCENT_II)
-// -----------------------------------------------------------------------------------
-// Clear out all stuck objects.  Called for a new ship
-void clear_stuck_objects(void)
-{
-	range_for (auto &i, Stuck_objects)
-	{
-		if (i.wallnum != wall_none)
-		{
-			const auto &&objp = vmobjptr(i.objnum);
-			if (objp->type == OBJ_WEAPON && get_weapon_id(objp) == weapon_id_type::FLARE_ID)
-				objp->lifeleft = F1_0/8;
-
-			i.wallnum = wall_none;
-			Num_stuck_objects--;
-		}
-	}
-
-	Assert(Num_stuck_objects == 0);
-
-}
-
 // -----------------------------------------------------------------------------------
 #define	MAX_BLAST_GLASS_DEPTH	5
 
@@ -1409,7 +1409,8 @@ static void bng_process_segment(const object &objp, fix damage, const vmsegptrid
 
 		if (segnum != segment_none) {
 			if (!visited[segnum]) {
-				if (WALL_IS_DOORWAY(segp, i) & WID_FLY_FLAG) {
+				if (WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, segp, segp, i) & WID_FLY_FLAG)
+				{
 					bng_process_segment(objp, damage, segp.absolute_sibling(segnum), depth, visited);
 				}
 			}
@@ -1507,6 +1508,7 @@ ASSERT_SERIAL_UDT_MESSAGE_SIZE(wall, 24);
 void wall_read(PHYSFS_File *fp, wall &w)
 {
 	PHYSFSX_serialize_read(fp, w);
+	w.flags &= ~WALL_EXPLODING;
 }
 
 DEFINE_SERIAL_UDT_TO_MESSAGE(active_door, d, (d.n_parts, d.front_wallnum, d.back_wallnum, d.time));

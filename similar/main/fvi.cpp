@@ -120,13 +120,12 @@ static ij_pair find_largest_normal(vms_vector t)
 
 //see if a point in inside a face by projecting into 2d
 __attribute_warn_unused_result
-static uint check_point_to_face(const vms_vector &checkp, const side *s,int facenum,int nv, const vertex_array_list_t &vertex_list)
+static unsigned check_point_to_face(const vms_vector &checkp, const vms_vector &norm, const unsigned facenum, const unsigned nv, const vertex_array_list_t &vertex_list)
 {
 ///
 	int edge;
 	uint edgemask;
 	fix check_i,check_j;
-	vms_vector norm = s->normals[facenum];
 	//now do 2d check to see if point is in side
 
 	//project polygon onto plane by finding largest component of normal
@@ -165,17 +164,16 @@ static uint check_point_to_face(const vms_vector &checkp, const side *s,int face
 
 }
 
-
 //check if a sphere intersects a face
 __attribute_warn_unused_result
-static int check_sphere_to_face(const vms_vector &pnt, const side *s,int facenum,int nv,fix rad,const vertex_array_list_t &vertex_list)
+static int check_sphere_to_face(const vms_vector &pnt, const vms_vector &normal, const unsigned facenum, const unsigned nv, const fix rad, const vertex_array_list_t &vertex_list)
 {
 	const auto checkp = pnt;
 	uint edgemask;
 
 	//now do 2d check to see if point is in side
 
-	edgemask = check_point_to_face(pnt,s,facenum,nv,vertex_list);
+	edgemask = check_point_to_face(pnt, normal, facenum, nv, vertex_list);
 
 	//we've gone through all the sides, are we inside?
 
@@ -239,10 +237,8 @@ static int check_sphere_to_face(const vms_vector &pnt, const side *s,int facenum
 __attribute_warn_unused_result
 static int check_line_to_face(vms_vector &newp,const vms_vector &p0,const vms_vector &p1,const vcsegptridx_t seg,int side,int facenum,int nv,fix rad)
 {
-	const struct side *s=&seg->sides[side];
-	vms_vector norm;
-
-		norm = seg->sides[side].normals[facenum];
+	auto &s = seg->sides[side];
+	const vms_vector &norm = s.normals[facenum];
 
 	const auto v = create_abs_vertex_lists(seg, s, side);
 	const auto &num_faces = v.first;
@@ -269,8 +265,7 @@ static int check_line_to_face(vms_vector &newp,const vms_vector &p0,const vms_ve
 	if (rad!=0)
 		vm_vec_scale_add2(checkp,norm,-rad);
 
-	return check_sphere_to_face(checkp,s,facenum,nv,rad,vertex_list);
-
+	return check_sphere_to_face(checkp, s.normals[facenum], facenum, nv, rad, vertex_list);
 }
 
 //returns the value of a determinant
@@ -318,8 +313,7 @@ static int special_check_line_to_face(vms_vector &newp,const vms_vector &p0,cons
 {
 	fix edge_t=0,move_t=0,edge_t2=0,move_t2=0;
 	int edgenum;
-	uint edgemask;
-	const struct side *s=&seg->sides[side];
+	auto &s = seg->sides[side];
 
 	//calc some basic stuff
 
@@ -329,7 +323,7 @@ static int special_check_line_to_face(vms_vector &newp,const vms_vector &p0,cons
 
 	//figure out which edge(s) to check against
 
-	edgemask = check_point_to_face(p0,s,facenum,nv,vertex_list);
+	unsigned edgemask = check_point_to_face(p0, s.normals[facenum], facenum, nv, vertex_list);
 
 	if (edgemask == 0)
 		return check_line_to_face(newp,p0,p1,seg,side,facenum,nv,rad);
@@ -579,21 +573,20 @@ static vm_distance_squared check_vector_to_sphere_1(vms_vector &intp,const vms_v
 //determine if a vector intersects with an object
 //if no intersects, returns 0, else fills in intp and returns dist
 __attribute_warn_unused_result
-static vm_distance_squared check_vector_to_object(vms_vector &intp,const vms_vector &p0,const vms_vector &p1,fix rad,const vcobjptr_t obj,const vcobjptr_t otherobj)
+static vm_distance_squared check_vector_to_object(vms_vector &intp, const vms_vector &p0, const vms_vector &p1, const fix rad, const object_base &obj, const object &otherobj)
 {
-	fix size = obj->size;
+	fix size = obj.size;
 
-	if (obj->type == OBJ_ROBOT && Robot_info[get_robot_id(obj)].attack_type)
+	if (obj.type == OBJ_ROBOT && Robot_info[get_robot_id(obj)].attack_type)
 		size = (size*3)/4;
 
 	//if obj is player, and bumping into other player or a weapon of another coop player, reduce radius
-	if (obj->type == OBJ_PLAYER &&
-		 	((otherobj->type == OBJ_PLAYER) ||
-	 		((Game_mode&GM_MULTI_COOP) && otherobj->type == OBJ_WEAPON && otherobj->ctype.laser_info.parent_type == OBJ_PLAYER)))
+	if (obj.type == OBJ_PLAYER &&
+		 	(otherobj.type == OBJ_PLAYER ||
+	 		((Game_mode & GM_MULTI_COOP) && otherobj.type == OBJ_WEAPON && otherobj.ctype.laser_info.parent_type == OBJ_PLAYER)))
 		size = size/2;
 
-	return check_vector_to_sphere_1(intp,p0,p1,obj->pos,size+rad);
-
+	return check_vector_to_sphere_1(intp, p0, p1, obj.pos, size+rad);
 }
 
 
@@ -922,7 +915,7 @@ static int fvi_sub(vms_vector &intp, segnum_t &ints, const vms_vector &p0, const
 
 	
 					if (face_hit_type) {            //through this wall/door
-						auto wid_flag = WALL_IS_DOORWAY(seg, side);
+						auto wid_flag = WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, seg, seg, side);
 
 						//if what we have hit is a door, check the adjoining seg
 
@@ -1099,7 +1092,7 @@ quit_looking:
 namespace dsx {
 fvi_hitpoint find_hitpoint_uv(const vms_vector &pnt, const vcsegptridx_t seg, const uint_fast32_t sidenum, const uint_fast32_t facenum)
 {
-	const side *side = &seg->sides[sidenum];
+	auto &side = seg->sides[sidenum];
 	fix k0,k1;
 	int i;
 
@@ -1113,7 +1106,7 @@ fvi_hitpoint find_hitpoint_uv(const vms_vector &pnt, const vcsegptridx_t seg, co
 
 	//1. find what plane to project this wall onto to make it a 2d case
 
-	const auto &normal_array = side->normals[facenum];
+	const auto &normal_array = side.normals[facenum];
 	auto fmax = [](const vms_vector &v, fix vms_vector::*a, fix vms_vector::*b) {
 		return abs(v.*a) > abs(v.*b) ? a : b;
 	};
@@ -1151,7 +1144,7 @@ fvi_hitpoint find_hitpoint_uv(const vms_vector &pnt, const vcsegptridx_t seg, co
 
 	array<uvl, 3> uvls;
 	for (i=0;i<3;i++)
-		uvls[i] = side->uvls[vn[facenum*3+i].vertnum];
+		uvls[i] = side.uvls[vn[facenum * 3 + i].vertnum];
 
 	auto p = [&uvls, k0, k1](fix uvl::*pmf) {
 		return uvls[1].*pmf + fixmul(k0,uvls[0].*pmf - uvls[1].*pmf) + fixmul(k1,uvls[2].*pmf - uvls[1].*pmf);
@@ -1170,7 +1163,7 @@ int check_trans_wall(const vms_vector &pnt,const vcsegptridx_t seg,int sidenum,i
 	int bmx,bmy;
 
 #if defined(DXX_BUILD_DESCENT_I)
-	Assert(WALL_IS_DOORWAY(seg,sidenum) == WID_TRANSPARENT_WALL);
+	assert(WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, seg, seg, sidenum) == WID_TRANSPARENT_WALL);
 #endif
 
 	const auto hitpoint = find_hitpoint_uv(pnt,seg,sidenum,facenum);	//	Don't compute light value.
@@ -1222,12 +1215,12 @@ static int sphere_intersects_wall(const vms_vector &pnt, const vcsegptridx_t seg
 					int face_hit_type;      //in what way did we hit the face?
 
 					//did we go through this wall/door?
-					const auto *sidep = &seg->sides[side];
+					auto &sidep = seg->sides[side];
 					const auto v = create_abs_vertex_lists(seg, sidep, side);
 					const auto &num_faces = v.first;
 					const auto &vertex_list = v.second;
 
-					face_hit_type = check_sphere_to_face(pnt, sidep,
+					face_hit_type = check_sphere_to_face(pnt, sidep.normals[face],
 										face,((num_faces==1)?4:3),rad,vertex_list);
 
 					if (face_hit_type) {            //through this wall/door

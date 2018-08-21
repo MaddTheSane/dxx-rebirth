@@ -26,6 +26,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #pragma once
 
 #include <cstddef>
+#include <utility>
 #include "dxxsconf.h"
 #include "dsx-ns.h"
 #include "fmtcheck.h"
@@ -112,7 +113,7 @@ extern vms_vector Believed_player_pos;
 }
 
 namespace dsx {
-void move_towards_segment_center(vmobjptr_t objp);
+void move_towards_segment_center(object_base &objp);
 imobjptridx_t gate_in_robot(int type, vmsegptridx_t segnum);
 void do_ai_frame(vmobjptridx_t objp);
 void do_ai_frame_all();
@@ -123,8 +124,8 @@ void create_path_to_station(vmobjptridx_t objp, int max_length);
 void ai_follow_path(vmobjptridx_t objp, int player_visibility, const vms_vector *vec_to_player);
 void ai_turn_towards_vector(const vms_vector &vec_to_player, object_base &obj, fix rate);
 extern void init_ai_objects(void);
-void create_n_segment_path(vmobjptridx_t objp, int path_length, imsegidx_t avoid_seg);
-void create_n_segment_path_to_door(vmobjptridx_t objp, int path_length);
+void create_n_segment_path(vmobjptridx_t objp, unsigned path_length, imsegidx_t avoid_seg);
+void create_n_segment_path_to_door(vmobjptridx_t objp, unsigned path_length);
 }
 #endif
 namespace dcx {
@@ -140,14 +141,12 @@ static inline vms_vector make_random_vector()
 namespace dsx {
 void init_robots_for_level();
 #if defined(DXX_BUILD_DESCENT_II)
-void create_path_to_segment(vmobjptridx_t objp, segnum_t goalseg, int max_length, int safety_flag);
 int polish_path(vmobjptridx_t objp, point_seg *psegs, int num_points);
 void move_towards_player(vmobjptr_t objp, const vms_vector &vec_to_player);
 #endif
 
 // max_length is maximum depth of path to create.
 // If -1, use default: MAX_DEPTH_TO_SEARCH_FOR_PLAYER
-void create_path_to_player(vmobjptridx_t objp, int max_length, int safety_flag);
 void attempt_to_resume_path(vmobjptridx_t objp);
 
 // When a robot and a player collide, some robots attack!
@@ -157,7 +156,7 @@ int ai_door_is_openable(
 #if defined(DXX_BUILD_DESCENT_II)
 	player_flags,
 #endif
-	vcsegptr_t segp, int sidenum);
+	const shared_segment &segp, unsigned sidenum);
 int player_is_visible_from_object(vmobjptridx_t objp, vms_vector &pos, fix field_of_view, const vms_vector &vec_to_player);
 extern void ai_reset_all_paths(void);   // Reset all paths.  Call at the start of a level.
 int ai_multiplayer_awareness(vmobjptridx_t objp, int awareness_level);
@@ -289,13 +288,36 @@ static inline std::size_t operator-(point_seg_array_t::iterator i, point_seg_arr
 {
 	return std::distance(p.begin(), i);
 }
+
+enum class create_path_random_flag : uint8_t
+{
+	nonrandom,
+	random,
+};
+
+enum class create_path_safety_flag : uint8_t
+{
+	unsafe,
+	safe,
+};
+
+enum class create_path_result : uint8_t
+{
+	early,
+	finished,
+};
+
 }
 
 namespace dsx {
+
 #if defined(DXX_BUILD_DESCENT_II)
 extern fix64            Boss_hit_time;
+void create_path_to_segment(vmobjptridx_t objp, segnum_t goalseg, unsigned max_length, create_path_safety_flag safety_flag);
 #endif
-int create_path_points(vmobjptridx_t objp, segnum_t start_seg, segnum_t end_seg, point_seg_array_t::iterator point_segs, short *num_points, int max_depth, int random_flag, int safety_flag, imsegidx_t avoid_seg);
+
+void create_path_to_player(vmobjptridx_t objp, unsigned max_length, create_path_safety_flag safety_flag);
+std::pair<create_path_result, unsigned> create_path_points(vmobjptridx_t objp, vcsegidx_t start_seg, icsegidx_t end_seg, point_seg_array_t::iterator point_segs, unsigned max_depth, create_path_random_flag random_flag, create_path_safety_flag safety_flag, icsegidx_t avoid_seg);
 
 int ai_save_state(PHYSFS_File * fp);
 int ai_restore_state(PHYSFS_File *fp, int version, int swap);

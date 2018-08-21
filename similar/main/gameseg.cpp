@@ -50,7 +50,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #endif
 
 #include "compiler-range_for.h"
-#include "partial_range.h"
+#include "cast_range_result.h"
 
 using std::min;
 
@@ -67,8 +67,8 @@ class abs_vertex_lists_predicate
 	const array<unsigned, MAX_VERTICES_PER_SEGMENT> &m_vp;
 	const array<unsigned, 4> &m_sv;
 public:
-	abs_vertex_lists_predicate(const vcsegptr_t segp, uint_fast32_t sidenum) :
-		m_vp(segp->verts), m_sv(Side_to_verts_int[sidenum])
+	abs_vertex_lists_predicate(const shared_segment &seg, const uint_fast32_t sidenum) :
+		m_vp(seg.verts), m_sv(Side_to_verts_int[sidenum])
 	{
 	}
 	unsigned operator()(const uint_fast32_t vv) const
@@ -131,15 +131,17 @@ static void compute_segment_center(fvcvertptr &vcvertptr, vms_vector &r, const a
 
 namespace dsx {
 #if defined(DXX_BUILD_DESCENT_II)
-array<dl_index, MAX_DL_INDICES> Dl_indices;
 array<delta_light, MAX_DELTA_LIGHTS> Delta_lights;
-unsigned Num_static_lights;
 #endif
+
+}
+
+namespace dcx {
 
 // ------------------------------------------------------------------------------------------
 // Compute the center point of a side of a segment.
 //	The center point is defined to be the average of the 4 points defining the side.
-void compute_center_point_on_side(fvcvertptr &vcvertptr, vms_vector &vp, const segment &sp, const unsigned side)
+void compute_center_point_on_side(fvcvertptr &vcvertptr, vms_vector &vp, const shared_segment &sp, const unsigned side)
 {
 	compute_center_point_on_side(vcvertptr, vp, sp.verts, side);
 }
@@ -147,7 +149,7 @@ void compute_center_point_on_side(fvcvertptr &vcvertptr, vms_vector &vp, const s
 // ------------------------------------------------------------------------------------------
 // Compute segment center.
 //	The center point is defined to be the average of the 8 points defining the segment.
-void compute_segment_center(fvcvertptr &vcvertptr, vms_vector &vp, const segment &sp)
+void compute_segment_center(fvcvertptr &vcvertptr, vms_vector &vp, const shared_segment &sp)
 {
 	compute_segment_center(vcvertptr, vp, sp.verts);
 }
@@ -155,18 +157,14 @@ void compute_segment_center(fvcvertptr &vcvertptr, vms_vector &vp, const segment
 // -----------------------------------------------------------------------------
 //	Given two segments, return the side index in the connecting segment which connects to the base segment
 //	Optimized by MK on 4/21/94 because it is a 2% load.
-uint_fast32_t find_connect_side(const vcsegidx_t base_seg, const segment &con_seg)
+uint_fast32_t find_connect_side(const vcsegidx_t base_seg, const shared_segment &con_seg)
 {
 	return find_connect_child(base_seg, con_seg.children);
 }
 
-}
-
-namespace dcx {
-
 // -----------------------------------------------------------------------------------
 //	Given a side, return the number of faces
-bool get_side_is_quad(const side &sidep)
+bool get_side_is_quad(const shared_side &sidep)
 {
 	switch (sidep.get_type())
 	{
@@ -176,7 +174,7 @@ bool get_side_is_quad(const side &sidep)
 		case SIDE_IS_TRI_13:	
 			return false;
 		default:
-			throw side::illegal_type(&sidep);
+			throw side::illegal_type(sidep);
 	}
 }
 
@@ -188,26 +186,26 @@ static void get_side_verts(side_vertnum_list_t &vertlist, const array<unsigned, 
 		vertlist[i] = vp[sv[i]];
 }
 
-}
-
-namespace dsx {
-
-void get_side_verts(side_vertnum_list_t &vertlist, const segment &segp, const unsigned sidenum)
+void get_side_verts(side_vertnum_list_t &vertlist, const shared_segment &segp, const unsigned sidenum)
 {
 	get_side_verts(vertlist, segp.verts, sidenum);
 }
 
+}
+
+namespace dsx {
+
 __attribute_cold
 __noreturn
-static void create_vertex_list_from_invalid_side(const vcsegptr_t segp, const side *const sidep)
+static void create_vertex_list_from_invalid_side(const shared_segment &segp, const shared_side &sidep)
 {
 	throw side::illegal_type(segp, sidep);
 }
 
 template <typename T, typename V>
-static uint_fast32_t create_vertex_lists_from_values(T &va, const vcsegptr_t segp, const side *const sidep, const V &&f0, const V &&f1, const V &&f2, const V &&f3)
+static uint_fast32_t create_vertex_lists_from_values(T &va, const shared_segment &segp, const shared_side &sidep, const V &&f0, const V &&f1, const V &&f2, const V &&f3)
 {
-	const auto type = sidep->get_type();
+	const auto type = sidep.get_type();
 	if (type == SIDE_IS_TRI_13)
 	{
 		va[0] = va[5] = f3;
@@ -243,7 +241,7 @@ static uint_fast32_t create_vertex_lists_from_values(T &va, const vcsegptr_t seg
 }
 
 template <typename T, typename F>
-static inline uint_fast32_t create_vertex_lists_by_predicate(T &va, const vcsegptr_t segp, const side *const sidep, const F &&f)
+static inline uint_fast32_t create_vertex_lists_by_predicate(T &va, const shared_segment &segp, const shared_side &sidep, const F &&f)
 {
 	return create_vertex_lists_from_values(va, segp, sidep, f(0), f(1), f(2), f(3));
 }
@@ -260,7 +258,7 @@ static inline uint_fast32_t create_vertex_lists_by_predicate(T &va, const vcsegp
 // Note: these are not absolute vertex numbers, but are relative to the segment
 // Note:  for triagulated sides, the middle vertex of each trianle is the one NOT
 //   adjacent on the diagonal edge
-uint_fast32_t create_all_vertex_lists(vertex_array_list_t &vertices, const vcsegptr_t segp, const side *const sidep, const uint_fast32_t sidenum)
+uint_fast32_t create_all_vertex_lists(vertex_array_list_t &vertices, const shared_segment &segp, const shared_side &sidep, const uint_fast32_t sidenum)
 {
 	assert(sidenum < Side_to_verts_int.size());
 	auto &sv = Side_to_verts_int[sidenum];
@@ -276,36 +274,34 @@ uint_fast32_t create_all_vertex_lists(vertex_array_list_t &vertices, const vcseg
 //	If there is one face, it has 4 vertices.
 //	If there are two faces, they both have three vertices, so face #0 is stored in vertices 0,1,2,
 //	face #1 is stored in vertices 3,4,5.
-void create_all_vertnum_lists(vertex_vertnum_array_list &vertnums, const vcsegptr_t segp, const side *const sidep, uint_fast32_t sidenum)
+void create_all_vertnum_lists(vertex_vertnum_array_list &vertnums, const shared_segment &segp, const shared_side &sidep, const uint_fast32_t sidenum)
 {
 	create_vertex_lists_by_predicate(vertnums, segp, sidep, all_vertnum_lists_predicate(segp, sidenum));
 }
 
 // -----
 // like create_all_vertex_lists(), but generate absolute point numbers
-uint_fast32_t create_abs_vertex_lists(vertex_array_list_t &vertices, const vcsegptr_t segp, const side *sidep, uint_fast32_t sidenum)
+uint_fast32_t create_abs_vertex_lists(vertex_array_list_t &vertices, const shared_segment &segp, const shared_side &sidep, const uint_fast32_t sidenum)
 {
 	return create_vertex_lists_by_predicate(vertices, segp, sidep, abs_vertex_lists_predicate(segp, sidenum));
 }
 
 //returns 3 different bitmasks with info telling if this sphere is in
 //this segment.  See segmasks structure for info on fields  
-segmasks get_seg_masks(fvcvertptr &vcvertptr, const vms_vector &checkp, const vcsegptr_t segnum, fix rad)
+segmasks get_seg_masks(fvcvertptr &vcvertptr, const vms_vector &checkp, const shared_segment &seg, const fix rad)
 {
 	int			sn,facebit,sidebit;
 	segmasks		masks{};
 
-	const auto &seg = segnum;
-
 	//check point against each side of segment. return bitmask
 
 	for (sn=0,facebit=sidebit=1;sn<6;sn++,sidebit<<=1) {
-		auto s = &seg->sides[sn];
+		auto &s = seg.sides[sn];
 		
 		// Get number of faces on this side, and at vertex_list, store vertices.
 		//	If one face, then vertex_list indicates a quadrilateral.
 		//	If two faces, then 0,1,2 define one triangle, 3,4,5 define the second.
-		const auto v = create_abs_vertex_lists(segnum, s, sn);
+		const auto v = create_abs_vertex_lists(seg, s, sn);
 		const auto &num_faces = v.first;
 		const auto &vertex_list = v.second;
 
@@ -321,15 +317,15 @@ segmasks get_seg_masks(fvcvertptr &vcvertptr, const vms_vector &checkp, const vc
 			const auto &&mvert = vcvertptr(vertnum);
 
 			auto a = vertex_list[4] < vertex_list[1]
-				? std::make_pair(vertex_list[4], &s->normals[0])
-				: std::make_pair(vertex_list[1], &s->normals[1]);
+				? std::make_pair(vertex_list[4], &s.normals[0])
+				: std::make_pair(vertex_list[1], &s.normals[1]);
 			const auto mdist = vm_dist_to_plane(vcvertptr(a.first), *a.second, mvert);
 
 			side_count = center_count = 0;
 
 			for (int fn=0;fn<2;fn++,facebit<<=1) {
 
-				const auto dist = vm_dist_to_plane(checkp, s->normals[fn], mvert);
+				const auto dist = vm_dist_to_plane(checkp, s.normals[fn], mvert);
 
 				if (dist-rad < -PLANE_DIST_TOLERANCE) {
 					if (dist < -PLANE_DIST_TOLERANCE)	//in front of face
@@ -367,7 +363,7 @@ segmasks get_seg_masks(fvcvertptr &vcvertptr, const vms_vector &checkp, const vc
 			const auto vertnum = *std::min_element(b, std::next(b, 4));
 			const auto &&mvert = vcvertptr(vertnum);
 
-			const auto dist = vm_dist_to_plane(checkp, s->normals[0], mvert);
+			const auto dist = vm_dist_to_plane(checkp, s.normals[0], mvert);
 			if (dist-rad < -PLANE_DIST_TOLERANCE) {
 				if (dist < -PLANE_DIST_TOLERANCE)
 					masks.centermask |= sidebit;
@@ -398,7 +394,7 @@ static uint8_t get_side_dists(fvcvertptr &vcvertptr, const vms_vector &checkp,co
 
 	side_dists = {};
 	for (sn=0,facebit=sidebit=1;sn<6;sn++,sidebit<<=1) {
-		side	*s = &seg->sides[sn];
+		auto &s = seg->sides[sn];
 
 		// Get number of faces on this side, and at vertex_list, store vertices.
 		//	If one face, then vertex_list indicates a quadrilateral.
@@ -419,15 +415,15 @@ static uint8_t get_side_dists(fvcvertptr &vcvertptr, const vms_vector &checkp,co
 			auto &mvert = *vcvertptr(vertnum);
 
 			auto a = vertex_list[4] < vertex_list[1]
-				? std::make_pair(vertex_list[4], &s->normals[0])
-				: std::make_pair(vertex_list[1], &s->normals[1]);
+				? std::make_pair(vertex_list[4], &s.normals[0])
+				: std::make_pair(vertex_list[1], &s.normals[1]);
 			const auto mdist = vm_dist_to_plane(vcvertptr(a.first), *a.second, mvert);
 
 			center_count = 0;
 
 			for (int fn=0;fn<2;fn++,facebit<<=1) {
 
-				const auto dist = vm_dist_to_plane(checkp, s->normals[fn], mvert);
+				const auto dist = vm_dist_to_plane(checkp, s.normals[fn], mvert);
 
 				if (dist < -PLANE_DIST_TOLERANCE) {	//in front of face
 					center_count++;
@@ -463,7 +459,7 @@ static uint8_t get_side_dists(fvcvertptr &vcvertptr, const vms_vector &checkp,co
 			auto b = begin(vertex_list);
 			auto vertnum = *std::min_element(b, std::next(b, 4));
 
-			const auto dist = vm_dist_to_plane(checkp, s->normals[0], vcvertptr(vertnum));
+			const auto dist = vm_dist_to_plane(checkp, s.normals[0], vcvertptr(vertnum));
 	
 			if (dist < -PLANE_DIST_TOLERANCE) {
 				mask |= sidebit;
@@ -527,7 +523,7 @@ int check_segment_connections(void)
 				const auto &con_vertex_list = cv.second;
 
 				if (con_num_faces != num_faces) {
-					LevelError("Segment #%u side %u: wrong faces: con_num_faces=%lu num_faces=%lu.", seg.get_unchecked_index(), sidenum, con_num_faces, num_faces);
+					LevelError("Segment #%u side %u: wrong faces: con_num_faces=%" PRIuFAST32 " num_faces=%" PRIuFAST32 ".", seg.get_unchecked_index(), sidenum, con_num_faces, num_faces);
 					errors = 1;
 				}
 				else
@@ -839,7 +835,7 @@ vm_distance find_connected_distance(const vms_vector &p0, const vcsegptridx_t se
 		if (conn_side != side_none)
 		{
 #if defined(DXX_BUILD_DESCENT_II)
-			if (WALL_IS_DOORWAY(seg1, conn_side) & wid_flag)
+			if (WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, seg1, seg1, conn_side) & wid_flag)
 #endif
 			{
 				return vm_vec_dist_quick(p0, p1);
@@ -873,15 +869,15 @@ vm_distance find_connected_distance(const vms_vector &p0, const vcsegptridx_t se
 	cur_depth = 0;
 
 	while (cur_seg != seg1) {
-		const auto &&segp = vmsegptr(cur_seg);
+		auto &segp = *vmsegptr(cur_seg);
 		for (int sidenum = 0; sidenum < MAX_SIDES_PER_SEGMENT; sidenum++) {
 
 			int	snum = sidenum;
 
-			const auto this_seg = segp->children[snum];
+			const auto this_seg = segp.children[snum];
 			if (!IS_CHILD(this_seg))
 				continue;
-			if (!wid_flag.value || (WALL_IS_DOORWAY(segp, snum) & wid_flag))
+			if (!wid_flag.value || (WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, segp, segp, snum) & wid_flag))
 			{
 				if (!visited[this_seg]) {
 					seg_queue[qtail].start = cur_seg;
@@ -984,38 +980,38 @@ namespace dsx {
 //	Extract the matrix into byte values.
 //	Create a position relative to vertex 0 with 1/256 normal "fix" precision.
 //	Stuff segment in a short.
-void create_shortpos_native(shortpos *spp, const vcobjptr_t objp)
+void create_shortpos_native(fvcsegptr &vcsegptr, fvcvertptr &vcvertptr, shortpos *spp, const object_base &objp)
 {
 	// int	segnum;
 	sbyte   *sp;
 
 	sp = spp->bytemat;
 
-	*sp++ = convert_to_byte(objp->orient.rvec.x);
-	*sp++ = convert_to_byte(objp->orient.uvec.x);
-	*sp++ = convert_to_byte(objp->orient.fvec.x);
-	*sp++ = convert_to_byte(objp->orient.rvec.y);
-	*sp++ = convert_to_byte(objp->orient.uvec.y);
-	*sp++ = convert_to_byte(objp->orient.fvec.y);
-	*sp++ = convert_to_byte(objp->orient.rvec.z);
-	*sp++ = convert_to_byte(objp->orient.uvec.z);
-	*sp++ = convert_to_byte(objp->orient.fvec.z);
+	*sp++ = convert_to_byte(objp.orient.rvec.x);
+	*sp++ = convert_to_byte(objp.orient.uvec.x);
+	*sp++ = convert_to_byte(objp.orient.fvec.x);
+	*sp++ = convert_to_byte(objp.orient.rvec.y);
+	*sp++ = convert_to_byte(objp.orient.uvec.y);
+	*sp++ = convert_to_byte(objp.orient.fvec.y);
+	*sp++ = convert_to_byte(objp.orient.rvec.z);
+	*sp++ = convert_to_byte(objp.orient.uvec.z);
+	*sp++ = convert_to_byte(objp.orient.fvec.z);
 
-	spp->segment = objp->segnum;
-	const auto segp = vmsegptr(objp->segnum);
-	auto &vert = *vcvertptr(segp->verts[0]);
-	spp->xo = (objp->pos.x - vert.x) >> RELPOS_PRECISION;
-	spp->yo = (objp->pos.y - vert.y) >> RELPOS_PRECISION;
-	spp->zo = (objp->pos.z - vert.z) >> RELPOS_PRECISION;
+	spp->segment = objp.segnum;
+	auto &segp = *vcsegptr(objp.segnum);
+	auto &vert = *vcvertptr(segp.verts[0]);
+	spp->xo = (objp.pos.x - vert.x) >> RELPOS_PRECISION;
+	spp->yo = (objp.pos.y - vert.y) >> RELPOS_PRECISION;
+	spp->zo = (objp.pos.z - vert.z) >> RELPOS_PRECISION;
 
- 	spp->velx = (objp->mtype.phys_info.velocity.x) >> VEL_PRECISION;
-	spp->vely = (objp->mtype.phys_info.velocity.y) >> VEL_PRECISION;
-	spp->velz = (objp->mtype.phys_info.velocity.z) >> VEL_PRECISION;
+ 	spp->velx = (objp.mtype.phys_info.velocity.x) >> VEL_PRECISION;
+	spp->vely = (objp.mtype.phys_info.velocity.y) >> VEL_PRECISION;
+	spp->velz = (objp.mtype.phys_info.velocity.z) >> VEL_PRECISION;
 }
 
-void create_shortpos_little(shortpos *spp, const vcobjptr_t objp)
+void create_shortpos_little(fvcsegptr &vcsegptr, fvcvertptr &vcvertptr, shortpos *spp, const object_base &objp)
 {
-	create_shortpos_native(spp, objp);
+	create_shortpos_native(vcsegptr, vcvertptr, spp, objp);
 // swap the short values for the big-endian machines.
 
 	if (words_bigendian)
@@ -1094,12 +1090,12 @@ void extract_quaternionpos(const vmobjptridx_t objp, quaternionpos &qpp)
 // ------------------------------------------------------------------------------------------
 //	Extract a vector from a segment.  The vector goes from the start face to the end face.
 //	The point on each face is the average of the four points forming the face.
-static void extract_vector_from_segment(const vcsegptr_t sp, vms_vector &vp, const uint_fast32_t istart, const uint_fast32_t iend)
+static void extract_vector_from_segment(const shared_segment &sp, vms_vector &vp, const uint_fast32_t istart, const uint_fast32_t iend)
 {
 	vp = {};
 	auto &start = Side_to_verts[istart];
 	auto &end = Side_to_verts[iend];
-	auto &verts = sp->verts;
+	auto &verts = sp.verts;
 	for (uint_fast32_t i = 0; i != 4; ++i)
 	{
 		vm_vec_sub2(vp, vcvertptr(verts[start[i]]));
@@ -1124,7 +1120,7 @@ void extract_orient_from_segment(vms_matrix *m,const vcsegptr_t seg)
 //	Extract the forward vector from segment *sp, return in *vp.
 //	The forward vector is defined to be the vector from the the center of the front face of the segment
 // to the center of the back face of the segment.
-void extract_forward_vector_from_segment(const vcsegptr_t sp,vms_vector &vp)
+void extract_forward_vector_from_segment(const shared_segment &sp, vms_vector &vp)
 {
 	extract_vector_from_segment(sp,vp,WFRONT,WBACK);
 }
@@ -1133,7 +1129,7 @@ void extract_forward_vector_from_segment(const vcsegptr_t sp,vms_vector &vp)
 //	Extract the right vector from segment *sp, return in *vp.
 //	The forward vector is defined to be the vector from the the center of the left face of the segment
 // to the center of the right face of the segment.
-void extract_right_vector_from_segment(const vcsegptr_t sp,vms_vector &vp)
+void extract_right_vector_from_segment(const shared_segment &sp, vms_vector &vp)
 {
 	extract_vector_from_segment(sp,vp,WLEFT,WRIGHT);
 }
@@ -1142,7 +1138,7 @@ void extract_right_vector_from_segment(const vcsegptr_t sp,vms_vector &vp)
 //	Extract the up vector from segment *sp, return in *vp.
 //	The forward vector is defined to be the vector from the the center of the bottom face of the segment
 // to the center of the top face of the segment.
-void extract_up_vector_from_segment(const vcsegptr_t sp,vms_vector &vp)
+void extract_up_vector_from_segment(const shared_segment &sp, vms_vector &vp)
 {
 	extract_vector_from_segment(sp,vp,WBOTTOM,WTOP);
 }
@@ -1230,11 +1226,11 @@ static int check_for_degenerate_segment(const vcsegptr_t sp)
 
 }
 
-static void add_side_as_quad(side *const sidep, const vms_vector &normal)
+static void add_side_as_quad(shared_side &sidep, const vms_vector &normal)
 {
-	sidep->set_type(SIDE_IS_QUAD);
-	sidep->normals[0] = normal;
-	sidep->normals[1] = normal;
+	sidep.set_type(SIDE_IS_QUAD);
+	sidep.normals[0] = normal;
+	sidep.normals[1] = normal;
 	//	If there is a connection here, we only formed the faces for the purpose of determining segment boundaries,
 	//	so don't generate polys, else they will get rendered.
 //	if (sp->children[sidenum] != -1)
@@ -1394,7 +1390,7 @@ void create_walls_on_side(const vmsegptridx_t sp, int sidenum)
 	if (negate_flag)
 		vm_vec_negate(vn);
 
-	const auto s = &sp->sides[sidenum];
+	auto &s = sp->sides[sidenum];
 	if (dist_to_plane > PLANE_DIST_TOLERANCE)
 	{
 		add_side_as_2_triangles(sp, sidenum);
@@ -1411,8 +1407,8 @@ void create_walls_on_side(const vmsegptridx_t sp, int sidenum)
 
 			auto &vvn = *vcvertptr(min(vertex_list[0],vertex_list[2]));
 
-			const fix dist0 = vm_dist_to_plane(vcvertptr(vertex_list[1]), s->normals[1], vvn);
-			const fix dist1 = vm_dist_to_plane(vcvertptr(vertex_list[4]), s->normals[0], vvn);
+			const fix dist0 = vm_dist_to_plane(vcvertptr(vertex_list[1]), s.normals[1], vvn);
+			const fix dist1 = vm_dist_to_plane(vcvertptr(vertex_list[4]), s.normals[0], vvn);
 
 			s0 = sign(dist0);
 			s1 = sign(dist1);
@@ -1639,7 +1635,7 @@ static void apply_light_to_segment(visited_segment_bitarray_t &visited, const vm
 
 	if (recursion_depth < 2)
 		for (int sidenum=0; sidenum<6; sidenum++) {
-			if (WALL_IS_DOORWAY(segp,sidenum) & WID_RENDPAST_FLAG)
+			if (WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, segp, segp, sidenum) & WID_RENDPAST_FLAG)
 				apply_light_to_segment(visited, segp.absolute_sibling(segp->children[sidenum]), segment_center, light_intensity, recursion_depth+1);
 		}
 
@@ -1650,11 +1646,12 @@ static void apply_light_to_segment(visited_segment_bitarray_t &visited, const vm
 //this code is copied from the editor routine calim_process_all_lights()
 static void change_segment_light(const vmsegptridx_t segp,int sidenum,int dir)
 {
-	if (WALL_IS_DOORWAY(segp, sidenum) & WID_RENDER_FLAG) {
-		side	*sidep = &segp->sides[sidenum];
+	if (WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, segp, segp, sidenum) & WID_RENDER_FLAG)
+	{
+		const unique_side &sidep = segp->sides[sidenum];
 		fix	light_intensity;
 
-		light_intensity = TmapInfo[sidep->tmap_num].lighting + TmapInfo[sidep->tmap_num2 & 0x3fff].lighting;
+		light_intensity = TmapInfo[sidep.tmap_num].lighting + TmapInfo[sidep.tmap_num2 & 0x3fff].lighting;
 		if (light_intensity) {
 			const auto segment_center = compute_segment_center(vcvertptr, segp);
 			visited_segment_bitarray_t visited;
@@ -1676,9 +1673,9 @@ static void change_segment_light(const vmsegptridx_t segp,int sidenum,int dir)
 static void change_light(const vmsegptridx_t segnum, const uint8_t sidenum, const int dir)
 {
 	const fix ds = dir * DL_SCALE;
-	const auto &&pr = partial_const_range(Dl_indices, Num_static_lights);
+	const auto &&pr = cast_range_result<const dl_index &>(Dl_indices.vcptr);
 	const auto &&er = std::equal_range(pr.begin(), pr.end(), dl_index{segnum, sidenum, 0, 0});
-	range_for (auto &i, partial_range_t<const dl_index *>(er.first, er.second))
+	range_for (auto &i, partial_range_t<const dl_index *>(er.first.base().base(), er.second.base().base()))
 	{
 		const uint_fast32_t idx = i.index;
 			range_for (auto &j, partial_const_range(Delta_lights, idx, idx + i.count))
@@ -1812,7 +1809,7 @@ static void ambient_mark_bfs(const vmsegptridx_t segp, segment_lava_depth_array 
 		 * No explicit check for IS_CHILD.  If !IS_CHILD, then
 		 * WALL_IS_DOORWAY never sets WID_RENDPAST_FLAG.
 		 */
-		if (!(WALL_IS_DOORWAY(segp, i) & WID_RENDPAST_FLAG))
+		if (!(WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, segp, segp, i) & WID_RENDPAST_FLAG))
 			continue;
 		ambient_mark_bfs(segp.absolute_sibling(child), segdepth_lava, segdepth_water, depth - 1, s2f_bit);
 	}

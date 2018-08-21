@@ -81,9 +81,7 @@ const array<array<unsigned, 4>, MAX_SIDES_PER_SEGMENT>  Side_to_verts_int{{
 
 //--unused-- fix	Laser_delay_time = F1_0/6;		//	Delay between laser fires.
 
-#define DEFAULT_DIFFICULTY		1
-
-int	Difficulty_level=DEFAULT_DIFFICULTY;	//	Difficulty level in 0..NDL-1, 0 = easiest, NDL-1 = hardest
+Difficulty_level_type Difficulty_level=DEFAULT_DIFFICULTY;	//	Difficulty level in 0..NDL-1, 0 = easiest, NDL-1 = hardest
 }
 
 #if DXX_HAVE_POISON_UNDEFINED
@@ -97,6 +95,7 @@ valptridx<managed_type>::array_managed_type::array_managed_type()
 namespace dsx {
 #if defined(DXX_BUILD_DESCENT_II)
 valptridx<cloaking_wall>::array_managed_type CloakingWalls;
+valptridx<dl_index>::array_managed_type Dl_indices;
 #endif
 d_level_object_state ObjectState;
 valptridx<object>::array_managed_type Objects;

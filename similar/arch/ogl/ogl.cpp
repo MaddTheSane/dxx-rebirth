@@ -70,9 +70,9 @@ using std::max;
 
 //change to 1 for lots of spew.
 #if 0
-#define glmprintf(0,a) con_printf(CON_DEBUG, a)
+#define glmprintf(A) con_printf A
 #else
-#define glmprintf(a)
+#define glmprintf(A)
 #endif
 
 #ifndef M_PI
@@ -324,17 +324,17 @@ static void ogl_texture_stats(void)
 	glGetIntegerv(GL_DEPTH_BITS, &depth);
 	gr_set_default_canvas();
 	auto &canvas = *grd_curcanv;
-	gr_set_curfont(canvas, GAME_FONT);
+	const auto &game_font = *GAME_FONT;
 	gr_set_fontcolor(canvas, BM_XRGB(255, 255, 255), -1);
 	colorsize = (idx * res * dbl) / 8;
 	depthsize = res * depth / 8;
 	const auto &&fspacx2 = FSPACX(2);
 	const auto &&fspacy1 = FSPACY(1);
-	const auto &&line_spacing = LINE_SPACING(canvas);
-	gr_printf(canvas, fspacx2, fspacy1, "%i flat %i tex %i bitmaps", r_polyc, r_tpolyc, r_bitmapc);
-	gr_printf(canvas, fspacx2, fspacy1 + line_spacing, "%i(%i,%i,%i,%i) %iK(%iK wasted) (%i postcachedtex)", used, usedrgba, usedrgb, usedidx, usedother, truebytes / 1024, (truebytes - databytes) / 1024, r_texcount - r_cachedtexcount);
-	gr_printf(canvas, fspacx2, fspacy1 + (line_spacing * 2), "%ibpp(r%i,g%i,b%i,a%i)x%i=%iK depth%i=%iK", idx, r, g, b, a, dbl, colorsize / 1024, depth, depthsize / 1024);
-	gr_printf(canvas, fspacx2, fspacy1 + (line_spacing * 3), "total=%iK", (colorsize + depthsize + truebytes) / 1024);
+	const auto &&line_spacing = LINE_SPACING(game_font, game_font);
+	gr_printf(canvas, game_font, fspacx2, fspacy1, "%i flat %i tex %i bitmaps", r_polyc, r_tpolyc, r_bitmapc);
+	gr_printf(canvas, game_font, fspacx2, fspacy1 + line_spacing, "%i(%i,%i,%i,%i) %iK(%iK wasted) (%i postcachedtex)", used, usedrgba, usedrgb, usedidx, usedother, truebytes / 1024, (truebytes - databytes) / 1024, r_texcount - r_cachedtexcount);
+	gr_printf(canvas, game_font, fspacx2, fspacy1 + (line_spacing * 2), "%ibpp(r%i,g%i,b%i,a%i)x%i=%iK depth%i=%iK", idx, r, g, b, a, dbl, colorsize / 1024, depth, depthsize / 1024);
+	gr_printf(canvas, game_font, fspacx2, fspacy1 + (line_spacing * 3), "total=%iK", (colorsize + depthsize + truebytes) / 1024);
 }
 
 static void ogl_bindbmtex(grs_bitmap &bm, bool edgepad){
@@ -422,7 +422,7 @@ void ogl_cache_level_textures(void)
 		if (ec.vc.num_frames>max_efx)
 			max_efx=ec.vc.num_frames;
 	}
-	glmprintf((0,"max_efx:%i\n",max_efx));
+	glmprintf((CON_DEBUG, "max_efx:%i", max_efx));
 	for (ef=0;ef<max_efx;ef++){
 		range_for (eclip &ec, partial_range(Effects, Num_effects))
 		{
@@ -439,7 +439,7 @@ void ogl_cache_level_textures(void)
 				const auto tmap1 = side.tmap_num;
 				const auto tmap2 = side.tmap_num2;
 				if (tmap1<0 || tmap1>=NumTextures){
-					glmprintf((0,"ogl_cache_level_textures %i %p %i %i\n",seg,&side,tmap1,NumTextures));
+					glmprintf((CON_DEBUG, "ogl_cache_level_textures %p %p %i %i", seg.get_unchecked_pointer(), &side, tmap1, NumTextures));
 					//				tmap1=0;
 					continue;
 				}
@@ -457,7 +457,7 @@ void ogl_cache_level_textures(void)
 				ogl_loadbmtexture(*bm, 0);
 			}
 		}
-		glmprintf((0,"finished ef:%i\n",ef));
+		glmprintf((CON_DEBUG, "finished ef:%i", ef));
 	}
 	reset_special_effects();
 	init_special_effects();
@@ -522,7 +522,7 @@ void ogl_cache_level_textures(void)
 			}
 		}
 	}
-	glmprintf((0,"finished caching\n"));
+	glmprintf((CON_DEBUG, "finished caching"));
 	r_cachedtexcount = r_texcount;
 }
 
@@ -912,7 +912,7 @@ void _g3_draw_tmap(grs_canvas &canvas, const unsigned nv, cg3s_point *const *con
 		/* for cloaked state faces */
 		color_alpha = 1.0 - (canvas.cv_fade_level / static_cast<GLfloat>(NUM_LIGHTING_LEVELS));
 	} else {
-		glmprintf((0,"g3_draw_tmap: unhandled tmap_drawer %p\n",tmap_drawer_ptr));
+		glmprintf((CON_DEBUG, "g3_draw_tmap: unhandled tmap_drawer"));
 		return;
 	}
 
@@ -1449,7 +1449,7 @@ static void tex_set_size1(ogl_texture &tex, const unsigned dbits, const unsigned
 	int u;
 	if (tex.tw!=w || tex.th!=h){
 		u=(tex.w/static_cast<float>(tex.tw)*w) * (tex.h/static_cast<float>(tex.th)*h);
-		glmprintf((0,"shrunken texture?\n"));
+		glmprintf((CON_DEBUG, "shrunken texture?"));
 	}else
 		u=tex.w*tex.h;
 	if (bits<=0){//the beta nvidia GLX server. doesn't ever return any bit sizes, so just use some assumptions.
@@ -1459,7 +1459,7 @@ static void tex_set_size1(ogl_texture &tex, const unsigned dbits, const unsigned
 		tex.bytes=(static_cast<float>(w)*h*bits)/8.0;
 		tex.bytesu=(static_cast<float>(u)*bits)/8.0;
 	}
-	glmprintf((0,"tex_set_size1: %ix%i, %ib(%i) %iB\n",w,h,bits,dbits,tex.bytes));
+	glmprintf((CON_DEBUG, "tex_set_size1: %ix%i, %ib(%i) %iB", w, h, bits, dbits, tex.bytes));
 }
 
 static void tex_set_size(ogl_texture &tex)
@@ -1713,10 +1713,6 @@ static int ogl_loadtexture(const palette_array_t &pal, const uint8_t *data, cons
 			}
 			break;
 		case OGL_TEXFILT_UPSCALE: // Upscaled - i.e. Blocky Filtered (Bilinear)
-			gl_mag_filter_int = GL_LINEAR_MIPMAP_LINEAR;
-			gl_min_filter_int = GL_LINEAR_MIPMAP_LINEAR;
-			buildmipmap = true;
-			break;
 		case OGL_TEXFILT_TRLINEAR: // Smooth - Trilinear
 			gl_mag_filter_int = GL_LINEAR;
 			gl_min_filter_int = GL_LINEAR_MIPMAP_LINEAR;
@@ -1811,7 +1807,7 @@ static void ogl_freetexture(ogl_texture &gltexture)
 {
 	if (gltexture.handle>0) {
 		r_texcount--;
-		glmprintf((0,"ogl_freetexture(%p):%i (%i left)\n",&gltexture,gltexture.handle,r_texcount));
+		glmprintf((CON_DEBUG, "ogl_freetexture(%p):%i (%i left)", &gltexture, gltexture.handle, r_texcount));
 		glDeleteTextures( 1, &gltexture.handle );
 //		gltexture->handle=0;
 		ogl_reset_texture(gltexture);

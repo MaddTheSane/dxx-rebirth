@@ -127,7 +127,23 @@ void calc_d_tick();
 
 extern int Game_suspended;          // if non-zero, nothing moves but player
 
-extern int Difficulty_level;    // Difficulty level in 0..NDL-1, 0 = easiest, NDL-1 = hardest
+enum Difficulty_level_type : int
+{
+	Difficulty_0,
+	Difficulty_1,
+	Difficulty_2,
+	Difficulty_3,
+	Difficulty_4,
+};
+
+#define DEFAULT_DIFFICULTY		Difficulty_1
+
+extern Difficulty_level_type Difficulty_level;    // Difficulty level in 0..NDL-1, 0 = easiest, NDL-1 = hardest
+static inline Difficulty_level_type cast_clamp_difficulty(const unsigned d)
+{
+	return (d <= Difficulty_4) ? static_cast<Difficulty_level_type>(d) : Difficulty_4;
+}
+
 extern int Global_missile_firing_count;
 
 extern int PaletteRedAdd, PaletteGreenAdd, PaletteBlueAdd;
@@ -164,6 +180,7 @@ void start_time();
 void reset_time();       // called when starting level
 }
 
+#if DXX_USE_SCREENSHOT
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
 namespace dcx {
 
@@ -174,6 +191,7 @@ void write_bmp(PHYSFS_File *, unsigned w, unsigned h);
 extern void save_screen_shot(int automap_flag);
 
 }
+#endif
 #endif
 
 enum cockpit_mode_t

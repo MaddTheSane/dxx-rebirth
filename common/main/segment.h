@@ -138,7 +138,7 @@ struct wallnum_t : prohibit_void_ptr<wallnum_t>
 };
 #endif
 
-struct side
+struct shared_side
 {
 	struct illegal_type;
 	side_type m_type;           // replaces num_faces and tri_edge, 1 = quad, 2 = 0:2 triangulation, 3 = 1:3 triangulation
@@ -146,36 +146,52 @@ struct side
 	void set_type(side_type t) { m_type = t; }
 	inline void set_type(unsigned t);
 	wallnum_t wall_num;
-	short   tmap_num;
-	short   tmap_num2;
-	array<uvl, 4>     uvls;
 	array<vms_vector, 2> normals;  // 2 normals, if quadrilateral, both the same.
 };
 
+struct unique_side
+{
+	int16_t tmap_num;
+	int16_t tmap_num2;
+	array<uvl, 4>     uvls;
+};
+
+struct side : unique_side, shared_side
+{
+};
+
 #ifdef dsx
-struct segment {
+struct shared_segment
+{
 #if DXX_USE_EDITOR
 	segnum_t   segnum;     // segment number, not sure what it means
 	short   group;      // group number to which the segment belongs.
 #endif
-	objnum_t objects;    // pointer to objects in this segment
 	array<segnum_t, MAX_SIDES_PER_SEGMENT>   children;    // indices of 6 children segments, front, left, top, right, bottom, back
+	array<unsigned, MAX_VERTICES_PER_SEGMENT> verts;    // vertex ids of 4 front and 4 back vertices
+	uint8_t special;    // what type of center this is
+	int8_t matcen_num; // which center segment is associated with.
+	uint8_t station_idx;
+	/* if DXX_BUILD_DESCENT_II */
+	uint8_t s2_flags;
+	/* endif */
+	array<side, MAX_SIDES_PER_SEGMENT>    sides;       // 6 sides
+};
+
+struct unique_segment
+{
+	objnum_t objects;    // pointer to objects in this segment
 	//      If bit n (1 << n) is set, then side #n in segment has had light subtracted from original (editor-computed) value.
 	uint8_t light_subtracted;
 	/* if DXX_BUILD_DESCENT_II */
 	uint8_t slide_textures;
 	/* endif */
-	array<unsigned, MAX_VERTICES_PER_SEGMENT> verts;    // vertex ids of 4 front and 4 back vertices
-	ubyte   special;    // what type of center this is
-	sbyte   matcen_num; // which center segment is associated with.
-	uint8_t station_idx;
-	/* if DXX_BUILD_DESCENT_II */
-	uint8_t s2_flags;
-	/* endif */
 	fix     static_light;
-	array<side, MAX_SIDES_PER_SEGMENT>    sides;       // 6 sides
 };
 
+struct segment : unique_segment, shared_segment
+{
+};
 #endif
 
 struct count_segment_array_t : public count_array_t<segnum_t, MAX_SEGMENTS> {};
@@ -217,23 +233,23 @@ DXX_VALPTRIDX_DEFINE_GLOBAL_FACTORIES(vertex, vert, Vertices);
 }
 
 #ifdef dsx
-struct side::illegal_type : std::runtime_error
+struct shared_side::illegal_type : std::runtime_error
 {
-	icsegptr_t m_segment;
-	const side *m_side;
-	illegal_type(icsegptr_t seg, const side *s) :
+	const shared_segment *const m_segment;
+	const shared_side *const m_side;
+	illegal_type(const shared_segment &seg, const shared_side &s) :
 		runtime_error("illegal side type"),
-		m_segment(seg), m_side(s)
+		m_segment(&seg), m_side(&s)
 	{
 	}
-	illegal_type(const side *s) :
+	illegal_type(const shared_side &s) :
 		runtime_error("illegal side type"),
-		m_segment(nullptr), m_side(s)
+		m_segment(nullptr), m_side(&s)
 	{
 	}
 };
 
-void side::set_type(unsigned t)
+void shared_side::set_type(const unsigned t)
 {
 	switch (t)
 	{
@@ -243,7 +259,7 @@ void side::set_type(unsigned t)
 			set_type(static_cast<side_type>(t));
 			break;
 		default:
-			throw illegal_type(this);
+			throw illegal_type(*this);
 	}
 }
 
@@ -274,6 +290,8 @@ struct dl_index {
 		return sidenum < rhs.sidenum;
 	}
 };
+
+DXX_VALPTRIDX_DEFINE_GLOBAL_FACTORIES(dl_index, dlindex, Dl_indices);
 #endif
 
 }

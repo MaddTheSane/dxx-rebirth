@@ -10,14 +10,16 @@
 
 #include <type_traits>
 #include <physfs.h>
+#include "piggy.h"
 #include "maths.h"
+#include "textures.h"
 #include "fwd-object.h"
 #include "fwd-segment.h"
 #include "cpp-valptridx.h"
 
 namespace dcx {
 using actdoornum_t = uint8_t;
-constexpr unsigned MAX_WALLS = 255; // Maximum number of walls
+constexpr std::integral_constant<std::size_t, 255> MAX_WALLS{}; // Maximum number of walls
 constexpr std::integral_constant<std::size_t, 90> MAX_DOORS{};  // Maximum number of open doors
 struct active_door;
 }
@@ -55,10 +57,10 @@ constexpr std::integral_constant<wall_flag_t, 2> WALL_DOOR_OPENED{};   // Open d
 constexpr std::integral_constant<wall_flag_t, 8> WALL_DOOR_LOCKED{};   // Door is locked.
 constexpr std::integral_constant<wall_flag_t, 16> WALL_DOOR_AUTO{};  // Door automatically closes after time.
 constexpr std::integral_constant<wall_flag_t, 32> WALL_ILLUSION_OFF{};  // Illusionary wall is shut off.
+constexpr std::integral_constant<wall_flag_t, 64> WALL_EXPLODING{};
 }
 #if defined(DXX_BUILD_DESCENT_II)
 namespace dsx {
-constexpr std::integral_constant<wall_flag_t, 64> WALL_WALL_SWITCH{};  // This wall is openable by a wall switch.
 constexpr std::integral_constant<wall_flag_t, 128> WALL_BUDDY_PROOF{}; // Buddy assumes he cannot get through this wall.
 }
 #endif
@@ -192,7 +194,8 @@ DXX_VALPTRIDX_DEFINE_SUBTYPE_TYPEDEFS(cloaking_wall, clwall);
 DXX_VALPTRIDX_DECLARE_SUBTYPE(dsx::, wall, wallnum_t, dcx::MAX_WALLS);
 namespace dsx {
 DXX_VALPTRIDX_DEFINE_SUBTYPE_TYPEDEFS(wall, wall);
-extern array<wclip, MAX_WALL_ANIMS> WallAnims;
+using wall_animations_array = array<wclip, MAX_WALL_ANIMS>;
+extern wall_animations_array WallAnims;
 constexpr valptridx<wall>::magic_constant<0xffff> wall_none{};
 }
 
@@ -215,7 +218,7 @@ void wall_init();
 // Automatically checks if a there is a doorway (i.e. can fly through)
 #ifdef dsx
 namespace dsx {
-WALL_IS_DOORWAY_result_t wall_is_doorway (const side &side);
+WALL_IS_DOORWAY_result_t wall_is_doorway(const GameBitmaps_array &GameBitmaps, const Textures_array &Textures, fvcwallptr &vcwallptr, const shared_side &sside, const unique_side &uside);
 
 // Deteriorate appearance of wall. (Changes bitmap (paste-ons))
 }
@@ -234,12 +237,12 @@ namespace dsx {
 // Opens a door
 void wall_open_door(vmsegptridx_t seg, int side);
 
-}
-#endif
 #if defined(DXX_BUILD_DESCENT_I)
 #elif defined(DXX_BUILD_DESCENT_II)
 // Closes a door
 void wall_close_door(vmsegptridx_t seg, int side);
+#endif
+}
 #endif
 
 //return codes for wall_hit_process()
@@ -263,31 +266,16 @@ wall_hit_process_t wall_hit_process(player_flags, vmsegptridx_t seg, int side, f
 #endif
 void wall_toggle(vmsegptridx_t segnum, unsigned side);
 
-// Tidy up Walls array for load/save purposes.
-void reset_walls();
-
 // Called once per frame..
 #ifdef dsx
 namespace dsx {
 void wall_frame_process();
-
-//  An object got stuck in a door (like a flare).
-//  Add global entry.
 }
 #endif
-void add_stuck_object(vmobjptridx_t objp, vmsegptr_t segnum, int sidenum);
-void remove_obsolete_stuck_objects();
 
 //set the tmap_num or tmap_num2 field for a wall/door
-void wall_set_tmap_num(vmsegptridx_t seg,int side,vmsegptridx_t csegp,int cside,int anim_num,int frame_num);
+void wall_set_tmap_num(const wclip &, vmsegptridx_t seg, unsigned side, vmsegptridx_t csegp, unsigned cside, unsigned frame_num);
 
-// Remove any flares from a wall
-#ifdef dsx
-namespace dsx {
-void kill_stuck_objects(wallnum_t wallnum);
-
-}
-#endif
 #if defined(DXX_BUILD_DESCENT_II)
 //start wall open <-> closed transitions
 void start_wall_cloak(vmsegptridx_t seg, int side);
@@ -313,6 +301,4 @@ void active_door_write(PHYSFS_File *fp, const active_door &ad);
 
 void wall_write(PHYSFS_File *fp, const wall &w, short version);
 void wall_close_door_ref(active_door &);
-void init_stuck_objects();
-void clear_stuck_objects();
 #endif

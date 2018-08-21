@@ -82,9 +82,8 @@ struct WALL_IS_DOORWAY_result_t
 
 struct stuckobj : public prohibit_void_ptr<stuckobj>
 {
-	objnum_t objnum;
-	wallnum_t wallnum;
-	object_signature_t signature;
+	objnum_t objnum = object_none;
+	wallnum_t wallnum = wall_none;
 };
 
 //Start old wall structures
@@ -112,6 +111,15 @@ struct v19_wall : public prohibit_void_ptr<v19_wall>
 	int linked_wall;            // number of linked wall
 };
 
+class d_level_unique_stuck_object_state
+{
+protected:
+	unsigned Num_stuck_objects = 0;
+	array<stuckobj, 32> Stuck_objects;
+public:
+	void init_stuck_objects();
+};
+
 }
 
 //End old wall structures
@@ -119,12 +127,26 @@ struct v19_wall : public prohibit_void_ptr<v19_wall>
 #ifdef dsx
 namespace dsx {
 
+/* No shared state is possible for this structure, but include the
+ * `unique` qualifier to document its status.
+ */
+class d_level_unique_stuck_object_state : public ::dcx::d_level_unique_stuck_object_state
+{
+public:
+	void add_stuck_object(fvcwallptr &, vmobjptridx_t objp, const vcsegptr_t segp, unsigned sidenum);
+	void remove_stuck_object(vcobjidx_t);
+	void kill_stuck_objects(fvmobjptr &, vcwallidx_t wallnum);
+};
+
+extern d_level_unique_stuck_object_state LevelUniqueStuckObjectState;
+
 struct wall : public prohibit_void_ptr<wall>
 {
 	segnum_t segnum;
 	uint8_t  sidenum;     // Seg & side for this wall
 	uint8_t type;               // What kind of special wall.
 	fix     hps;                // "Hit points" of the wall.
+	uint16_t explode_time_elapsed;
 	wallnum_t linked_wall;        // number of linked wall
 	ubyte   flags;              // Flags for the wall.
 	ubyte   state;              // Opening, closing, etc.
@@ -185,17 +207,21 @@ struct wclip : public prohibit_void_ptr<wclip>
 
 constexpr std::integral_constant<uint16_t, 0xffff> wclip_frames_none{};
 
-static inline WALL_IS_DOORWAY_result_t WALL_IS_DOORWAY(const vcsegptr_t seg, const uint_fast32_t side)
+static inline WALL_IS_DOORWAY_result_t WALL_IS_DOORWAY(const GameBitmaps_array &GameBitmaps, const Textures_array &Textures, fvcwallptr &vcwallptr, const shared_segment &sseg, const unique_segment &useg, const uint_fast32_t side)
 {
-	const auto child = seg->children[side];
+	/* For now, useg is useless.  It will become useful when
+	 * shared_segment::sides splits into shared_side and unique_side.
+	 */
+	(void)useg;
+	const auto child = sseg.children[side];
 	if (unlikely(child == segment_none))
 		return WID_WALL;
 	if (unlikely(child == segment_exit))
 		return WID_EXTERNAL;
-	const auto &s = seg->sides[side];
-	if (likely(s.wall_num == wall_none))
+	auto &sside = sseg.sides[side];
+	if (likely(sside.wall_num == wall_none))
 		return WID_NO_WALL;
-	return wall_is_doorway(s);
+	return wall_is_doorway(GameBitmaps, Textures, vcwallptr, sside, sside);
 }
 }
 #endif

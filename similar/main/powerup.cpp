@@ -113,7 +113,7 @@ void do_powerup_frame(const vmobjptridx_t obj)
 		object_create_explosion(vmsegptridx(obj->segnum), obj->pos, F1_0*7/2, VCLIP_POWERUP_DISAPPEARANCE);
 
 		if ( Vclip[VCLIP_POWERUP_DISAPPEARANCE].sound_num > -1 )
-			digi_link_sound_to_object( Vclip[VCLIP_POWERUP_DISAPPEARANCE].sound_num, obj, 0, F1_0);
+			digi_link_sound_to_object(Vclip[VCLIP_POWERUP_DISAPPEARANCE].sound_num, obj, 0, F1_0, sound_stack::allow_stacking);
 	}
 }
 
@@ -415,10 +415,10 @@ int do_powerup(const vmobjptridx_t obj)
 			auto &plr = *vcplayerptr(i);
 			if (plr.connected != CONNECT_PLAYING)
 				continue;
-			const auto &&o = vcobjptr(plr.objnum);
-			if (o->type == OBJ_GHOST)
+			auto &o = *vcobjptr(plr.objnum);
+			if (o.type == OBJ_GHOST)
 				continue;
-			if (mydist > vm_vec_normalized_dir(tvec, obj->pos, o->pos))
+			if (mydist > vm_vec_normalized_dir(tvec, obj->pos, o.pos))
 				return 0;
 		}
 	}

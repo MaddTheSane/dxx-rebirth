@@ -457,12 +457,12 @@ static void draw_copyright()
 {
 	gr_set_default_canvas();
 	auto &canvas = *grd_curcanv;
-	gr_set_curfont(canvas, GAME_FONT);
+	auto &game_font = *GAME_FONT;
 	gr_set_fontcolor(canvas, BM_XRGB(6, 6, 6), -1);
-	const auto &&line_spacing = LINE_SPACING(canvas);
-	gr_string(canvas, 0x8000, SHEIGHT - line_spacing, TXT_COPYRIGHT);
+	const auto &&line_spacing = LINE_SPACING(game_font, game_font);
+	gr_string(canvas, game_font, 0x8000, SHEIGHT - line_spacing, TXT_COPYRIGHT);
 	gr_set_fontcolor(canvas, BM_XRGB(25, 0, 0), -1);
-	gr_string(canvas, 0x8000, SHEIGHT - (line_spacing * 2), DESCENT_VERSION);
+	gr_string(canvas, game_font, 0x8000, SHEIGHT - (line_spacing * 2), DESCENT_VERSION);
 }
 
 namespace dsx {
@@ -819,7 +819,6 @@ int select_demo(void)
 
 static int do_difficulty_menu()
 {
-	int s;
 	array<newmenu_item, NDL> m{{
 		nm_item_menu(MENU_DIFFICULTY_TEXT(0)),
 		nm_item_menu(MENU_DIFFICULTY_TEXT(1)),
@@ -828,15 +827,17 @@ static int do_difficulty_menu()
 		nm_item_menu(MENU_DIFFICULTY_TEXT(4)),
 	}};
 
-	s = newmenu_do1( NULL, TXT_DIFFICULTY_LEVEL, m.size(), &m.front(), unused_newmenu_subfunction, unused_newmenu_userdata, Difficulty_level);
+	const unsigned s = newmenu_do1(nullptr, TXT_DIFFICULTY_LEVEL, m.size(), &m.front(), unused_newmenu_subfunction, unused_newmenu_userdata, Difficulty_level);
 
-	if (s > -1 )	{
-		if (s != Difficulty_level)
+	if (s <= Difficulty_4)
+	{
+		const auto d = static_cast<Difficulty_level_type>(s);
+		if (d != Difficulty_level)
 		{
-			PlayerCfg.DefaultDifficulty = s;
+			PlayerCfg.DefaultDifficulty = d;
 			write_player_file();
 		}
-		Difficulty_level = s;
+		Difficulty_level = d;
 		return 1;
 	}
 	return 0;
@@ -976,43 +977,48 @@ static int gcd(int a, int b)
 
 void change_res()
 {
-	array<screen_mode, 50> modes;
+	newmenu_item m[50+8];
+	array<char, 12> crestext, casptext;
+
 	int mc = 0, citem = -1;
 
+#if SDL_MAJOR_VERSION == 1
+	array<screen_mode, 50> modes;
 	const auto num_presets = gr_list_modes(modes);
-
-	newmenu_item m[50+8];
-	char restext[50][12], crestext[12], casptext[12];
+	array<array<char, 12>, 50> restext;
 
 	range_for (auto &i, partial_const_range(modes, num_presets))
 	{
 		const auto &&sm_w = SM_W(i);
 		const auto &&sm_h = SM_H(i);
-		snprintf(restext[mc], sizeof(restext[mc]), "%ix%i", sm_w, sm_h);
+		snprintf(restext[mc].data(), restext[mc].size(), "%ix%i", sm_w, sm_h);
 		const auto checked = (citem == -1 && Game_screen_mode == i && GameCfg.AspectY == sm_w / gcd(sm_w, sm_h) && GameCfg.AspectX == sm_h / gcd(sm_w, sm_h));
 		if (checked)
 			citem = mc;
-		nm_set_item_radio(m[mc], restext[mc], checked, 0);
+		nm_set_item_radio(m[mc], restext[mc].data(), checked, 0);
 		mc++;
 	}
 
 	nm_set_item_text(m[mc], ""); mc++; // little space for overview
 	// the fields for custom resolution and aspect
 	const auto opt_cval = mc;
+#endif
 	nm_set_item_radio(m[mc], "use custom values", (citem == -1), 0); mc++;
 	nm_set_item_text(m[mc], "resolution:"); mc++;
-	snprintf(crestext, sizeof(crestext), "%ix%i", SM_W(Game_screen_mode), SM_H(Game_screen_mode));
+	snprintf(crestext.data(), crestext.size(), "%ix%i", SM_W(Game_screen_mode), SM_H(Game_screen_mode));
 	nm_set_item_input(m[mc], crestext);
 	mc++;
 	nm_set_item_text(m[mc], "aspect:"); mc++;
-	snprintf(casptext, sizeof(casptext), "%ix%i", GameCfg.AspectY, GameCfg.AspectX);
+	snprintf(casptext.data(), casptext.size(), "%ix%i", GameCfg.AspectY, GameCfg.AspectX);
 	nm_set_item_input(m[mc], casptext);
 	mc++;
 	nm_set_item_text(m[mc], ""); mc++; // little space for overview
 	// fullscreen
+#if SDL_MAJOR_VERSION == 1
 	const auto opt_fullscr = mc;
 	nm_set_item_checkbox(m[mc], "Fullscreen", gr_check_fullscreen());
 	mc++;
+#endif
 
 	// create the menu
 	newmenu_do1(NULL, "Screen Resolution", mc, m, unused_newmenu_subfunction, unused_newmenu_userdata, 0);
@@ -1020,6 +1026,7 @@ void change_res()
 	// menu is done, now do what we need to do
 
 	// check which resolution field was selected
+#if SDL_MAJOR_VERSION == 1
 	unsigned i;
 	for (i = 0; i <= mc; i++)
 		if (m[i].type == NM_TYPE_RADIO && m[i].radio().group == 0 && m[i].value == 1)
@@ -1028,17 +1035,20 @@ void change_res()
 	// now check for fullscreen toggle and apply if necessary
 	if (m[opt_fullscr].value != gr_check_fullscreen())
 		gr_toggle_fullscreen();
+#endif
 
 	screen_mode new_mode;
+#if SDL_MAJOR_VERSION == 1
 	if (i == opt_cval) // set custom resolution and aspect
+#endif
 	{
 		char revert[32];
 		char *x;
 		const char *errstr;
-		unsigned long w = strtoul(crestext, &x, 10), h;
+		unsigned long w = strtoul(crestext.data(), &x, 10), h;
 		screen_mode cmode;
 		if (
-			((x == crestext || *x != 'x' || !x[1] || ((h = strtoul(x + 1, &x, 10)), *x)) && (errstr = "Entered resolution must\nbe formatted as\n<number>x<number>", true)) ||
+			((x == crestext.data() || *x != 'x' || !x[1] || ((h = strtoul(x + 1, &x, 10)), *x)) && (errstr = "Entered resolution must\nbe formatted as\n<number>x<number>", true)) ||
 			((w < 320 || h < 200) && (errstr = "Entered resolution must\nbe at least 320x200", true))
 			)
 		{
@@ -1054,9 +1064,9 @@ void change_res()
 			cmode.height = h;
 		}
 		auto casp = cmode;
-		w = strtoul(casptext, &x, 10);
+		w = strtoul(casptext.data(), &x, 10);
 		if (
-			((x == casptext || *x != 'x' || !x[1] || ((h = strtoul(x + 1, &x, 10)), *x)) && (errstr = "Entered aspect ratio must\nbe formatted as\n<number>x<number>", true)) ||
+			((x == casptext.data() || *x != 'x' || !x[1] || ((h = strtoul(x + 1, &x, 10)), *x)) && (errstr = "Entered aspect ratio must\nbe formatted as\n<number>x<number>", true)) ||
 			((!w || !h) && (errstr = "Entered aspect ratio must\nnot use 0 term", true))
 			)
 		{
@@ -1073,6 +1083,7 @@ void change_res()
 		GameCfg.AspectX = SM_H(casp) / g;
 		new_mode = cmode;
 	}
+#if SDL_MAJOR_VERSION == 1
 	else if (i < num_presets) // set preset resolution
 	{
 		new_mode = modes[i];
@@ -1080,6 +1091,7 @@ void change_res()
 		GameCfg.AspectY = SM_W(new_mode) / g;
 		GameCfg.AspectX = SM_H(new_mode) / g;
 	}
+#endif
 
 	// clean up and apply everything
 	newmenu_free_background();
@@ -1090,9 +1102,14 @@ void change_res()
 		Game_screen_mode = new_mode;
 		if (Game_wind) // shortly activate Game_wind so it's canvas will align to new resolution. really minor glitch but whatever
 		{
-			d_event event;
-			WINDOW_SEND_EVENT(Game_wind, EVENT_WINDOW_ACTIVATED);
-			WINDOW_SEND_EVENT(Game_wind, EVENT_WINDOW_DEACTIVATED);
+			{
+				const d_event event{EVENT_WINDOW_ACTIVATED};
+				WINDOW_SEND_EVENT(Game_wind);
+			}
+			{
+				const d_event event{EVENT_WINDOW_DEACTIVATED};
+				WINDOW_SEND_EVENT(Game_wind);
+			}
 		}
 	}
 	game_init_render_buffers(SM_W(Game_screen_mode), SM_H(Game_screen_mode));
@@ -2429,9 +2446,9 @@ static window_event_result polygon_models_viewer_handler(window *, const d_event
 			{
 				auto &canvas = *grd_curcanv;
 				draw_model_picture(canvas, view_idx, ang);
-				gr_set_curfont(canvas, GAME_FONT);
 				gr_set_fontcolor(canvas, BM_XRGB(255, 255, 255), -1);
-				gr_printf(canvas, FSPACX(1), FSPACY(1), "ESC: leave\nSPACE/BACKSP: next/prev model (%i/%i)\nA/D: rotate y\nW/S: rotate x\nQ/E: rotate z\nR: reset orientation",view_idx,N_polygon_models-1);
+				auto &game_font = *GAME_FONT;
+				gr_printf(canvas, game_font, FSPACX(1), FSPACY(1), "ESC: leave\nSPACE/BACKSP: next/prev model (%i/%i)\nA/D: rotate y\nW/S: rotate x\nQ/E: rotate z\nR: reset orientation", view_idx, N_polygon_models - 1);
 			}
 			break;
 		case EVENT_WINDOW_CLOSE:
@@ -2510,9 +2527,9 @@ static window_event_result gamebitmaps_viewer_handler(window *, const d_event &e
 #else
 				gr_bitmap(canvas, (SWIDTH / 2) - (bm->bm_w / 2), (SHEIGHT / 2) - (bm->bm_h / 2), *bm);
 #endif
-				gr_set_curfont(canvas, GAME_FONT);
 				gr_set_fontcolor(canvas, BM_XRGB(255, 255, 255), -1);
-				gr_printf(canvas, FSPACX(1), FSPACY(1), "ESC: leave\nSPACE/BACKSP: next/prev bitmap (%i/%i)",view_idx,Num_bitmap_files-1);
+				auto &game_font = *GAME_FONT;
+				gr_printf(canvas, game_font, FSPACX(1), FSPACY(1), "ESC: leave\nSPACE/BACKSP: next/prev bitmap (%i/%i)", view_idx, Num_bitmap_files-1);
 			}
 			break;
 		case EVENT_WINDOW_CLOSE:

@@ -61,21 +61,15 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define	OBJ_SCALE		(F1_0/2)
 #define	OBJ_DEL_SIZE	(F1_0/2)
 
-static void show_objects_in_segment(const vcsegptr_t sp)
-{
-	range_for (const auto i, objects_in(sp, vcobjptridx, vcsegptr))
-		(void)i;
-}
-
 //returns the number of the first object in a segment, skipping the player
-static objnum_t get_first_object(const vmsegptr_t seg)
+static objnum_t get_first_object(fvcobjptr &vcobjptr, const unique_segment &seg)
 {
-	const auto id = seg->objects;
+	const auto id = seg.objects;
 	if (id == object_none)
 		return object_none;
-	const auto &&o = vmobjptr(id);
-	if (o == ConsoleObject)
-		return o->next;
+	auto &o = *vcobjptr(id);
+	if (&o == ConsoleObject)
+		return o.next;
 	return id;
 }
 
@@ -83,12 +77,12 @@ static objnum_t get_first_object(const vmsegptr_t seg)
 static objnum_t get_next_object(const vmsegptr_t seg,objnum_t id)
 {
 	if (id == object_none)
-		return get_first_object(seg);
+		return get_first_object(vcobjptr, seg);
 	for (auto o = vmobjptr(id);;)
 	{
 		id = o->next;
 		if (id == object_none)
-			return get_first_object(seg);
+			return get_first_object(vcobjptr, seg);
 		o = vmobjptr(id);
 		if (o != ConsoleObject)
 			return id;
@@ -117,7 +111,7 @@ int place_object(const vmsegptridx_t segp, const vms_vector &object_pos, short o
 {
 	vms_matrix seg_matrix;
 
-	med_extract_matrix_from_segment(segp,&seg_matrix);
+	med_extract_matrix_from_segment(segp, seg_matrix);
 
 	imobjptridx_t objnum = object_none;
 	switch (object_type)
@@ -257,8 +251,6 @@ int place_object(const vmsegptridx_t segp, const vms_vector &object_pos, short o
 
 	Cur_object_index = objnum;
 	//Cur_object_seg = Cursegp;
-
-	show_objects_in_segment(Cursegp);
 
 	Update_flags |= UF_WORLD_CHANGED;
 
@@ -521,7 +513,7 @@ public:
 class extract_uvec_from_segment
 {
 public:
-	static vms_vector get(vcsegptr_t segp)
+	static vms_vector get(const shared_segment &segp)
 	{
 		vms_vector v;
 		extract_up_vector_from_segment(segp, v);
@@ -638,7 +630,7 @@ static int rotate_object(const vmobjptridx_t obj, int p, int b, int h)
 
 static void reset_object(const vmobjptridx_t obj)
 {
-	med_extract_matrix_from_segment(vcsegptr(obj->segnum), &obj->orient);
+	med_extract_matrix_from_segment(vcsegptr(obj->segnum), obj->orient);
 }
 
 int ObjectResetObject()

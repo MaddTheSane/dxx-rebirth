@@ -14,6 +14,22 @@ import SCons.Util
 # Disable injecting tools into default namespace
 SCons.Defaults.DefaultEnvironment(tools = [])
 
+try:
+	# Test whether the old Python 2 names exist.
+	# If the names are found, use the old Python 2 names, which return
+	# views on the data.  If the names are not found, an exception is
+	# raised.
+	get_dictionary_key_view = dict.iterkeys
+	get_dictionary_item_view = dict.iteritems
+	get_dictionary_value_view = dict.itervalues
+except AttributeError:
+	# Name not found.  Use the new Python 3 names, which return views
+	# (at least until the Python maintainers decide to redefine the
+	# interface again).
+	get_dictionary_key_view = dict.keys
+	get_dictionary_item_view = dict.items
+	get_dictionary_value_view = dict.values
+
 def message(program,msg):
 	print("%s: %s" % (program.program_message_prefix, msg))
 
@@ -69,8 +85,10 @@ class StaticSubprocess:
 	def qcall(args,stderr=None,_pcall=pcall,_shlex_split=shlex_split):
 		return _pcall(_shlex_split(args),stderr)
 	@staticmethod
-	def get_version_head(cmd,_qcall=qcall):
-		v = _qcall('%s %s' % (cmd, '--version'), stderr=subprocess.PIPE)
+	def get_version_head(cmd,_pcall=pcall,_shlex_split=shlex_split):
+		# If cmd is bytes, then it is output from a program and should
+		# not be reparsed.
+		v = _pcall(([cmd] if isinstance(cmd, bytes) else _shlex_split(cmd)) + ['--version'], stderr=subprocess.PIPE)
 		try:
 			return v.__version_head
 		except AttributeError:
@@ -99,6 +117,7 @@ class ToolchainInformation(StaticSubprocess):
 			'LINKFLAGS',
 		) + (
 			(
+				'RC',
 				'RCFLAGS',
 			) if user_settings.host_platform == 'win32' else ()
 		):
@@ -186,10 +205,12 @@ class _ConfigureTests:
 	class Collector(object):
 		class RecordedTest(object):
 			__slots__ = ('desc', 'name', 'predicate')
-			def __init__(self,name,desc):
+			def __init__(self,name,desc,predicate=None):
 				self.name = name
 				self.desc = desc
-				self.predicate = None
+				self.predicate = predicate
+			def __repr__(self):
+				return '_ConfigureTests.Collector.RecordedTest(%r, %r, %r)' % (self.name, self.desc, self.predicate)
 
 		def __init__(self,record):
 			self.record = record
@@ -215,9 +236,7 @@ class ConfigureTests(_ConfigureTests):
 			_ConfigureTests.Collector.__init__(self, collector.record)
 			self.__guard = guard
 		def RecordedTest(self,name,desc):
-			r = self.__RecordedTest(name, desc)
-			r.predicate = self.__guard
-			return r
+			return self.__RecordedTest(name, desc, self.__guard)
 
 	class Cxx11RequiredFeature(object):
 		__slots__ = ('main', 'name', 'text')
@@ -257,11 +276,12 @@ class ConfigureTests(_ConfigureTests):
 		# One empty list for all the defaults.  The comprehension
 		# creates copies, so it is safe for the default value to be
 		# shared.
-		def __init__(self,env,keys,_l=[]):
-			self.flags = {k: env.get(k, _l)[:] for k in keys}
-			self.__getitem__ = self.flags.__getitem__
+		def __init__(self,env,keyviews,_l=[]):
+			self.flags = {k: env.get(k, _l)[:] for k in itertools.chain.from_iterable(keyviews)}
 		def restore(self,env):
 			env.Replace(**self.flags)
+		def __getitem__(self,name):
+			return self.flags.__getitem__(name)
 	class ForceVerboseLog(PreservedEnvironment):
 		def __init__(self,env):
 			# Force verbose output to sconf.log
@@ -340,7 +360,7 @@ class ConfigureTests(_ConfigureTests):
 				Display("%s: reading %s version from %s\n" % (message, pkgconfig_name, mv_cmd))
 				v = StaticSubprocess.pcall(mv_cmd)
 				if v.out:
-					Display("%s: %s version: %r\n" % (message, display_name, v.out.split('\n')[0]))
+					Display("%s: %s version: %r\n" % (message, display_name, v.out.splitlines()[0]))
 			except OSError as o:
 				Display("%s: failed with error %s; using default flags for '%s': %r\n" % (message, repr(o.message) if o.errno is None else ('%u ("%s")' % (o.errno, o.strerror)), pkgconfig_name, guess_flags))
 				flags = guess_flags
@@ -348,7 +368,7 @@ class ConfigureTests(_ConfigureTests):
 				Display("%s: reading %s settings from %s\n" % (message, display_name, cmd))
 				try:
 					flags = {
-						k:v for k,v in context.env.ParseFlags(' ' + StaticSubprocess.pcall(cmd).out).items()
+						k:v for k,v in get_dictionary_item_view(context.env.ParseFlags(' ' + StaticSubprocess.pcall(cmd).out.decode()))
 							if v and (k[0] in 'CL')
 					}
 					Display("%s: %s settings: %r\n" % (message, display_name, flags))
@@ -374,7 +394,6 @@ class ConfigureTests(_ConfigureTests):
 	custom_tests = _custom_test.tests
 	comment_not_supported = '/* not supported */'
 	__python_import_struct = None
-	__flags_Werror = {'CXXFLAGS' : ['-Werror']}
 	_cxx_conformance_cxx11 = 11
 	_cxx_conformance_cxx14 = 14
 	__cxx_conformance = None
@@ -670,7 +689,7 @@ help:assume C++ compiler works
 %.8x
 %s
 #endif
-''' % (_crc32(s), s)
+''' % (_crc32(s.encode()), s)
 		ToolchainInformation.show_partial_environ(cenv, user_settings, lambda s, _Display=context.Display, _msgprefix=self.msgprefix: _Display("%s:\t%s\n" % (_msgprefix, s)))
 		if use_ccache:
 			if use_distcc:
@@ -791,7 +810,7 @@ help:assume C++ compiler works
 				self.__cxx_conformance = level
 				return
 		raise SCons.Errors.StopError('C++ compiler does not accept any supported C++ -std option.')
-	def _Test(self,context,text,msg,action,main='',ext='.cpp',testflags={},successflags={},skipped=None,successmsg=None,failuremsg=None,expect_failure=False,calling_function=None):
+	def _Test(self,context,text,msg,action,main='',ext='.cpp',testflags={},successflags={},skipped=None,successmsg=None,failuremsg=None,expect_failure=False,calling_function=None,__flags_Werror = {'CXXFLAGS' : ['-Werror']}):
 		if calling_function is None:
 			calling_function = self._find_calling_sconf_function()
 		context.Message('%s: checking %s...' % (self.msgprefix, msg))
@@ -800,27 +819,37 @@ help:assume C++ compiler works
 			if self.user_settings.record_sconf_results:
 				self._sconf_results.append((calling_function, 'skipped'))
 			return
-		env_flags = self.PreservedEnvironment(context.env, successflags.keys() + testflags.keys() + self.__flags_Werror.keys() + ['CPPDEFINES'])
+		env_flags = self.PreservedEnvironment(context.env, (get_dictionary_key_view(successflags), get_dictionary_key_view(testflags), get_dictionary_key_view(__flags_Werror), ('CPPDEFINES',)))
 		context.env.MergeFlags(successflags)
 		forced, expected = self._check_sconf_forced(calling_function)
-		caller_modified_env_flags = self.PreservedEnvironment(context.env, self.__flags_Werror.keys() + testflags.keys())
-		# Always pass -Werror
-		context.env.Append(**self.__flags_Werror)
+		caller_modified_env_flags = self.PreservedEnvironment(context.env, (get_dictionary_key_view(testflags), get_dictionary_key_view(__flags_Werror)))
+		# Always pass -Werror to configure tests.
+		context.env.Append(**__flags_Werror)
 		context.env.Append(**testflags)
 		# If forced is None, run the test.  Otherwise, skip the test and
 		# take an action determined by the value of forced.
 		if forced is None:
 			r = action('''
-%s
-%s
-%s
+{tools}
+{macros}
+{text}
 
-#undef main	/* avoid -Dmain=SDL_main from libSDL */
+{undef_SDL_main}
+
+{main}
+'''.format(
+	tools=self.__tool_versions,
+	macros=self.__defined_macros,
+	text=text,
+	undef_SDL_main='' if self.user_settings.sdl2 else '#undef main	/* avoid -Dmain=SDL_main from libSDL */',
+	main=('' if main is None else
+'''
 int main(int argc,char**argv){(void)argc;(void)argv;
 %s
 
 ;}
-''' % (self.__tool_versions, self.__defined_macros, text, main), ext)
+''' % main
+	)), ext)
 			# Some tests check that the compiler rejects an input.
 			# SConf considers the result a failure when the compiler
 			# rejects the input.  For tests that consider a rejection to
@@ -873,7 +902,7 @@ int main(int argc,char**argv){(void)argc;(void)argv;
 			f = self.successful_flags
 			# Move most CPPDEFINES to the generated header, so that
 			# command lines are shorter.
-			for k, v in successflags.iteritems():
+			for k, v in get_dictionary_item_view(successflags):
 				if k == 'CPPDEFINES':
 					continue
 				f[k].extend(v)
@@ -904,39 +933,79 @@ int main(int argc,char**argv){(void)argc;(void)argv;
 	# stage failed and providing a text error message to show to the
 	# user.  Some callers handle failure by retrying with other options.
 	# Others abort the SConf run.
-	def _soft_check_system_library(self,context,header,main,lib,text='',successflags={}):
-		include = '\n'.join(['#include <%s>' % h for h in header])
+	def _soft_check_system_library(self,context,header,main,lib,pretext='',text='',successflags={},testflags={}):
+		include = pretext + '\n'.join(['#include <%s>' % h for h in header])
 		header = header[-1]
 		# Test library.  On success, good.  On failure, test header to
 		# give the user more help.
-		if self.Link(context, text=include + text, main=main, msg='for usable library %s' % lib, successflags=successflags):
+		if self.Link(context, text=include + text, main=main, msg='for usable library %s' % lib, successflags=successflags, testflags=testflags):
 			return
 		# If linking failed, an error report is inevitable.  Probe
 		# progressively simpler configurations to help the user trace
 		# the problem.
+		successflags = successflags.copy()
+		successflags.update(testflags)
 		Compile = self.Compile
 		if Compile(context, text=include + text, main=main, msg='for usable header %s' % header, testflags=successflags):
 			# If this Compile succeeds, then the test program can be
 			# compiled, but it cannot be linked.  The required library
 			# may be missing or broken.
 			return (0, "Header %s is usable, but library %s is not usable." % (header, lib))
-		if Compile(context, text=include, main='', msg='whether compiler can parse header %s' % header, testflags=successflags):
+		if Compile(context, text=include, main=main and '', msg='whether compiler can parse header %s' % header, testflags=successflags):
 			# If this Compile succeeds, then the test program cannot be
 			# compiled, but the header can be used with an empty test
 			# program.  Either the test program is broken or it relies
 			# on the header working differently than the used header
 			# actually works.
 			return (1, "Header %s is parseable, but cannot compile the test program." % header)
-		successflags.setdefault('CXXFLAGS', []).append('-E')
-		if Compile(context, text=include, main='', msg='whether preprocessor can parse header %s' % header, testflags=successflags):
-			# If this Compile succeeds, then the used header cannot be
-			# compiled at all.  The header may have a syntax error or
-			# have unmet dependencies.
+		CXXFLAGS = successflags.setdefault('CXXFLAGS', [])
+		CXXFLAGS.append('-E')
+		if Compile(context, text=include, main=main and '', msg='whether preprocessor can parse header %s' % header, testflags=successflags):
+			# If this Compile succeeds, then the used header can be
+			# preprocessed, but cannot be compiled as C++ even with an
+			# empty test program.  The header likely has a C++ syntax
+			# error or assumes prerequisite headers will be included by
+			# the calling program.
 			return (2, "Header %s exists, but cannot compile an empty program." % header)
-		# Finally, if nothing at all succeeded, either the header is
-		# completely missing or it is so badly broken that the
-		# preprocessor refuses to run to completion.
-		return (3, "Header %s is missing or unusable." % header)
+		CXXFLAGS.extend(('-M', '-MG'))
+		# If the header exists and is accepted by the preprocessor, an
+		# earlier test would have returned and this Compile would not be
+		# reached.  Therefore, this Compile runs only if the header:
+		# - Is directly missing
+		# - Is indirectly missing (present, but includes a missing
+		#   header)
+		# - Is present, but rejected by the preprocessor (such as from
+		#   an active `#error`)
+		if Compile(context, text=include, main=main and '', msg='whether preprocessor can locate header %s (and supporting headers)' % header, expect_failure=True, testflags=successflags):
+			# If this Compile succeeds, then the header does not exist,
+			# or exists and includes (possibly through layers of
+			# indirection) a header which does not exist.  Passing `-MG`
+			# makes non-existent headers legal, but still rejects
+			# headers with `#error` and similar constructs.
+			#
+			# `expect_failure=True` inverts it to a failure in the
+			# logged output and in the Python value returned from
+			# `Compile(...)`.
+			# - Compile success means that the header was not found,
+			#   which is not an error when `-MG` is passed, but was an
+			#   error in earlier tests.
+			# - Compile failure means that the header was found, but
+			#   unusable, which is an error even when `-MG` is passed.
+			#   This can happen if the header contains `#error`
+			#   directives that are not preprocessed out.
+			# Therefore, use `expect_failure=True` so that "success"
+			# (header not found) prints "no" ("cannot locate header")
+			# and "failure" (header found, but unusable) prints "yes"
+			# ("can locate header").  This keeps the confusing double
+			# negatives confined to the code and this comment.  User
+			# visible log messages are clear.
+			#
+			# Compile failure (unusable) is converted to a True return
+			# by `expect_failure=True`, so the guarded path should
+			# return "unusable" and the fallthrough path should return
+			# "missing".
+			return (3, "Header %s is unusable." % header)
+		return (4, "Header %s is missing or includes a missing supporting header." % header)
 	# Compile and link a program that uses a system library.  On
 	# success, return None.  On failure, abort the SConf run.
 	def _check_system_library(self,*args,**kwargs):
@@ -954,7 +1023,7 @@ int main(int argc,char**argv){(void)argc;(void)argv;
 			if struct is None:
 				import struct
 				cls.__python_import_struct = struct
-			a = struct.pack('cccc', '1', '2', '3', '4')
+			a = struct.pack('cccc', b'1', b'2', b'3', b'4')
 			unpack = struct.unpack
 			i = unpack('i', a)
 			if i == unpack('<i', a):
@@ -1020,6 +1089,7 @@ int main(int argc,char**argv){(void)argc;(void)argv;
 		if use_tracker:
 			self.check_curl(context)
 			self.check_jsoncpp(context)
+
 	@_implicit_test
 	def check_libpng(self,context,
 		_header=(
@@ -1074,6 +1144,7 @@ struct d_screenshot
 '''):
 		successflags = self.pkgconfig.merge(context, self.msgprefix, self.user_settings, 'libpng', 'libpng', _guess_flags)
 		return self._soft_check_system_library(context, header=_header, main=_main, lib='png', text=_text, successflags=successflags)
+
 	@_custom_test
 	def _check_user_settings_screenshot(self,context):
 		user_settings = self.user_settings
@@ -1082,16 +1153,19 @@ struct d_screenshot
 			screenshot_format_type = screenshot_mode
 		elif screenshot_mode == 'legacy':
 			screenshot_format_type = 'tga' if user_settings.opengl else 'pcx'
+		elif screenshot_mode == 'none':
+			screenshot_format_type = 'screenshot support disabled'
 		else:
 			return
 		context.Result('%s: checking how to format screenshots...%s' % (self.msgprefix, screenshot_format_type))
 		Define = context.sconf.Define
 		Define('DXX_USE_SCREENSHOT_FORMAT_PNG', int(screenshot_mode == 'png'))
 		Define('DXX_USE_SCREENSHOT_FORMAT_LEGACY', int(screenshot_mode == 'legacy'))
+		Define('DXX_USE_SCREENSHOT', int(screenshot_mode != 'none'))
 		if screenshot_mode == 'png':
 			e = self.check_libpng(context)
 			if e:
-				raise SCons.Errors.StopError(e[1] + '  Set screenshot=legacy to remove screenshot libpng requirement.')
+				raise SCons.Errors.StopError(e[1] + '  Set screenshot=legacy to remove screenshot libpng requirement or set screenshot=none to remove screenshot support.')
 
 	# Require _WIN32_WINNT >= 0x0501 to enable getaddrinfo
 	# Require _WIN32_WINNT >= 0x0600 to enable some useful AI_* flags
@@ -1231,6 +1305,8 @@ static void terminate_handler()
 	def check_libSDL2(self,context,_guess_flags={
 			'LIBS' : ['SDL2'] if sys.platform != 'darwin' else [],
 		}):
+		if not self.user_settings.opengl:
+			raise SCons.Errors.StopError('Rebirth does not support SDL2 without OpenGL.  Set opengl=1 or sdl2=0.')
 		self._check_libSDL(context, '2', _guess_flags)
 	def _check_libSDL(self,context,sdl2,guess_flags):
 		user_settings = self.user_settings
@@ -1252,6 +1328,7 @@ static void terminate_handler()
 			('DXX_MAX_AXES_PER_JOYSTICK', user_settings.max_axes_per_joystick),
 			('DXX_MAX_BUTTONS_PER_JOYSTICK', user_settings.max_buttons_per_joystick),
 			('DXX_MAX_HATS_PER_JOYSTICK', user_settings.max_hats_per_joystick),
+			('DXX_USE_SDL_REDBOOK_AUDIO', int(not sdl2)),
 		))
 		context.Display('%s: checking whether to enable joystick support...%s\n' % (self.msgprefix, 'yes' if user_settings.max_joysticks else 'no'))
 		# SDL2 removed CD-rom support.
@@ -1265,12 +1342,15 @@ static void terminate_handler()
 		main = '''
 	SDL_RWops *ops = reinterpret_cast<SDL_RWops *>(argv);
 #if DXX_MAX_JOYSTICKS
+#ifdef SDL_JOYSTICK_DISABLED
+#error "Rebirth configured with joystick support enabled, but SDL{sdl2} configured with joystick support disabled.  Disable Rebirth joystick support or install an SDL{sdl2} with joystick support enabled."
+#endif
 #define DXX_SDL_INIT_JOYSTICK	SDL_INIT_JOYSTICK |
 #else
 #define DXX_SDL_INIT_JOYSTICK
 #endif
-	SDL_Init(DXX_SDL_INIT_JOYSTICK %s | SDL_INIT_VIDEO | SDL_INIT_AUDIO);
-%s
+	SDL_Init(DXX_SDL_INIT_JOYSTICK {init_cdrom} | SDL_INIT_VIDEO | SDL_INIT_AUDIO);
+{test_opengl}
 #if DXX_MAX_JOYSTICKS
 	auto n = SDL_NumJoysticks();
 	(void)n;
@@ -1279,15 +1359,13 @@ static void terminate_handler()
 	SDL_FreeRW(ops);
 	SDL_Quit();
 '''
-		e = self._soft_check_system_library(context,header=['SDL.h'],main=main
-				% (init_cdrom, test_opengl),
+		e = self._soft_check_system_library(context,header=['SDL.h'],main=main.format(init_cdrom=init_cdrom, sdl2=sdl2, test_opengl=test_opengl),
 			lib=('SDL{0} with OpenGL' if test_opengl else 'SDL{0}').format(sdl2), successflags=successflags
 		)
 		if not e:
 			return
 		if test_opengl:
-			e2 = self._soft_check_system_library(context,header=['SDL.h'],main=main
-					% (init_cdrom, ''),
+			e2 = self._soft_check_system_library(context,header=['SDL.h'],main=main.format(init_cdrom=init_cdrom, sdl2=sdl2, test_opengl=''),
 				lib='SDL without OpenGL', successflags=successflags
 			)
 			if not e2 and e[0] == 1:
@@ -1856,32 +1934,8 @@ fail.
 	def __skip_missing_cxx_std(self,level,text,kwargs):
 		if self.__cxx_conformance < level:
 			kwargs.setdefault('skipped', text)
-	def _check_static_assert_method(self,context,msg,f,testflags={},_tdict={'expr' : 'true&&true'},_fdict={'expr' : 'false||false'},**kwargs):
-		_Compile = self.Compile
-		return _Compile(context, text=f % _tdict, main='f(A());', msg=msg % 'true', testflags=testflags, **kwargs) and \
-			_Compile(context, text=f % _fdict, main='f(A());', msg=msg % 'false', expect_failure=True, successflags=testflags, **kwargs)
-	@_implicit_test
-	def check_boost_static_assert(self,context,f):
-		"""
-help:assume Boost.StaticAssert works
-"""
-		return self._check_static_assert_method(context, 'for Boost.StaticAssert when %s', f, testflags={'CPPDEFINES' : ['DXX_HAVE_BOOST_STATIC_ASSERT']})
-	@_implicit_test
-	def check_c_typedef_static_assert(self,context,f):
-		"""
-help:assume C typedef-based static assertion works
-"""
-		return self._check_static_assert_method(context, 'for C typedef static assertion when %s', f, testflags={'CPPDEFINES' : ['DXX_HAVE_C_TYPEDEF_STATIC_ASSERT']})
-	@_implicit_test
-	def check_cxx11_static_assert(self,context,f):
-		"""
-help:assume compiler supports C++ intrinsic static_assert
-"""
-		return self._check_static_assert_method(context, 'for C++11 intrinsic static_assert when %s', f, testflags={'CPPDEFINES' : ['DXX_HAVE_CXX11_STATIC_ASSERT']})
 	@_custom_test
-	def _check_static_assert(self,context):
-		f = '''
-#include "compiler-static_assert.h"
+	def check_cxx11_static_assert(self,context,_f='''
 static_assert(%(expr)s, "global");
 struct A
 {
@@ -1908,12 +1962,11 @@ struct B
 		static_assert(a.value, "constructor member");
 	}
 	template <typename R>
-		B(B<R> &&b)
+		B(B<R> &&)
 		{
 			static_assert(%(expr)s, "template constructor literal");
 			static_assert(value, "template constructor self static");
 			static_assert(B<R>::value, "template constructor static");
-			static_assert(b.value, "template constructor member");
 		}
 };
 template <typename T>
@@ -1932,7 +1985,14 @@ void f(A a)
 	f(B<long>(B<int>(a)));
 }
 '''
-		how = self.check_cxx11_static_assert(context,f) or self.check_boost_static_assert(context,f) or self.check_c_typedef_static_assert(context,f)
+			,_msg='for C++11 intrinsic static_assert when %s',_tdict={'expr' : 'true&&true'},_fdict={'expr' : 'false||false'}):
+		"""
+help:assume compiler supports C++ intrinsic static_assert
+"""
+		_Compile = self.Compile
+		if not (_Compile(context, text=_f % _tdict, main='f(A());', msg=_msg % 'true') and \
+				_Compile(context, text=_f % _fdict, main='f(A());', msg=_msg % 'false', expect_failure=True)):
+			raise SCons.Errors.StopError('C++ compiler does not support tested versions of C++11 static_assert.')
 	@_custom_test
 	def check_namespace_disambiguate(self,context,_successflags={'CPPDEFINES' : ['DXX_HAVE_CXX_DISAMBIGUATE_USING_NAMESPACE']}):
 		self.Compile(context, text='''
@@ -2176,7 +2236,7 @@ I a()
 	@_implicit_test
 	def check_cxx11_variadic_forward_constructor(self,context,text,_macro_value=_quote_macro_value('''
     template <typename... Args>
-        D(Args&&... args) :
+        constexpr D(Args&&... args) :
             B,##__VA_ARGS__(std::forward<Args>(args)...) {}
 '''),**kwargs):
 		"""
@@ -2621,6 +2681,27 @@ where the cast is useless.
 			record(RecordedTest(mangle(opt), 'assume linker accepts %s' % opt))
 		assert cls.custom_tests[0].name == cls.check_cxx_works.__name__, cls.custom_tests[0].name
 		assert cls.custom_tests[-1].name == cls._restore_cxx_prefix.__name__, cls.custom_tests[-1].name
+
+	@_implicit_test
+	def check_boost_test(self,context):
+		self._check_system_library(context, header=('boost/test/unit_test.hpp',), pretext='''
+#define BOOST_TEST_DYN_LINK
+#define BOOST_TEST_MODULE Rebirth
+''', main=None, lib='Boost.Test', text='''
+BOOST_AUTO_TEST_CASE(f)
+{
+	BOOST_TEST(true);
+}
+''', testflags={'LIBS' : ['boost_unit_test_framework']})
+
+	@_custom_test
+	def _check_boost_test_required(self,context):
+		register_runtime_test_link_targets = self.user_settings.register_runtime_test_link_targets
+		context.Display('%s: checking whether to build runtime tests...' % self.msgprefix)
+		context.Result(register_runtime_test_link_targets)
+		if register_runtime_test_link_targets:
+			self.check_boost_test(context)
+
 	# This must be the last custom test.  It does not test the environment,
 	# but is responsible for reversing test-environment-specific changes made
 	# by check_cxx_works.
@@ -2649,14 +2730,19 @@ class cached_property(object):
 		return r
 
 class LazyObjectConstructor(object):
-	def __get_wrapped_object(s,self,env,StaticObject):
-		wrapper = s.get('transform_object', None)
+	key_transform_env = object()
+	key_transform_object = object()
+	key_transform_target = object()
+	def __get_wrapped_object(s,self,env,StaticObject,__transform_object=key_transform_object):
+		wrapper = s.get(__transform_object, None)
 		if wrapper is None:
 			return StaticObject
 		return wrapper(self, env, StaticObject)
 	def __lazy_objects(self,source,
 			cache={},
 			__get_wrapped_object=__get_wrapped_object,
+			__transform_env=key_transform_env,
+			__transform_target=key_transform_target,
 			__strip_extension=lambda _, name, _splitext=os.path.splitext: _splitext(name)[0]
 		):
 		env = self.env
@@ -2689,8 +2775,8 @@ class LazyObjectConstructor(object):
 					((__strip_extension, None, StaticObject, (s,)),)	\
 					if isinstance(s, str) \
 					else ((	\
-						s.get('transform_target', __strip_extension),	\
-						s.get('transform_env', None),	\
+						s.get(__transform_target, __strip_extension),	\
+						s.get(__transform_env, None),	\
 						__get_wrapped_object(s, self, env, StaticObject),	\
 						s['source'],	\
 					),)	\
@@ -2744,10 +2830,9 @@ class PCHManager(object):
 	# the same source tree.
 	_cls_scanned_files = None
 
-	# Import required modules when the first PCHManager is created, then
-	# remove the hook and use object.__new__ to create PCHManager
-	# instances.
-	def __new__(cls,*args):
+	# Import required modules when the first PCHManager is created.
+	@classmethod
+	def __initialize_cls_static_variables(cls):
 		from re import compile as c
 		# Match C preprocessor directives that start with i or e,
 		# capture any arguments, and allow no arguments.  This accepts:
@@ -2758,27 +2843,28 @@ class PCHManager(object):
 		# - #endif
 		# - #include
 		# - #error
-		cls._re_preproc_match = c(r'#\s*([ie]\w+)(?:\s+(.*))?').match
+		cls._re_preproc_match = c(br'#\s*([ie]\w+)(?:\s+(.*))?').match
 		# Capture the argument in a #include statement, including the
 		# angle brackets or quotes.
 		#
 		# Rebirth currently has no computed includes, so ignore computed
 		# includes.
-		cls._re_include_match = c(r'(<[^>]+>|"[^"]+")').match
+		cls._re_include_match = c(br'(<[^>]+>|"[^"]+")').match
 		# Strip a single-line C++ style comment ("// Text") and any
 		# preceding whitespace.  The C preprocessor will discard these
 		# when compiling the header.  Discarding them from the
 		# environment Value will prevent rebuilding pch.cpp when the
 		# only change is in such a comment.
-		cls._re_singleline_comments_sub = c(r'\s*//.*').sub
+		cls._re_singleline_comments_sub = c(br'\s*//.*').sub
 		# dict with key=filename with path, value=ScannedFile
 		cls._cls_scanned_files = {}
 		from tempfile import mkstemp
 		cls._tempfile_mkstemp = staticmethod(mkstemp)
-		del cls.__new__
-		return cls.__new__(cls,*args)
 
 	def __init__(self,user_settings,env,pch_subdir,configure_pch_flags,common_pch_manager):
+		if self._re_preproc_match is None:
+			self.__initialize_cls_static_variables()
+			assert self._re_preproc_match is not None
 		assert user_settings.syspch or user_settings.pch
 		self.user_settings = user_settings
 		self.env = env
@@ -2799,7 +2885,7 @@ class PCHManager(object):
 			if syspch_object_node:
 				CXXFLAGS += ['-include', syspch_cpp_filename, '-Winvalid-pch']
 			self.required_pch_object_node = self.ownpch_object_node = ownpch_object_node = env.StaticObject(target='%s.gch' % ownpch_cpp_filename, source=self.ownpch_cpp_node, CXXCOM=env._dxx_cxxcom_no_ccache_prefix, CXXFLAGS=CXXFLAGS)
-			env.Depends(ownpch_object_node, File(os.path.join(self.user_settings.builddir, 'dxxsconf.h')))
+			env.Depends(ownpch_object_node, File(os.path.join(user_settings.builddir, 'dxxsconf.h')))
 			if syspch_object_node:
 				env.Depends(ownpch_object_node, syspch_object_node)
 		self.pch_CXXFLAGS = ['-include', ownpch_cpp_filename or syspch_cpp_filename, '-Winvalid-pch']
@@ -2888,12 +2974,12 @@ class PCHManager(object):
 		header_search_path = None
 		os_path_join = os.path.join
 		os_path_exists = os.path.exists
-		for line in map(str.strip, source_filenode.get_contents().splitlines()):
+		for line in map(bytes.strip, source_filenode.get_contents().splitlines()):
 			if preceding_line is not None:
 				# Basic support for line continuation.
-				line = '%s %s' % (preceding_line[:-1], line)
+				line = b'%s %s' % (preceding_line[:-1], line)
 				preceding_line = None
-			elif not line.startswith('#'):
+			elif not line.startswith(b'#'):
 				# Allow unlimited non-preprocessor lines before the
 				# first preprocessor line.  Once one preprocessor line
 				# is found, track how many lines since the most recent
@@ -2908,7 +2994,7 @@ class PCHManager(object):
 				continue
 			lines_since_preprocessor = 0
 			# Joined lines are rare.  Ignore complicated quoting.
-			if line[-1] == '\\':
+			if line.endswith(b'\\'):
 				preceding_line = line
 				continue
 			m = match_preproc_directive(line)
@@ -2917,20 +3003,20 @@ class PCHManager(object):
 				# this scanner handles.
 				continue
 			directive = m.group(1)
-			if directive == 'include':
+			if directive == b'include':
 				m = match_include_directive(m.group(2))
 				if not m:
 					# This directive is probably a computed include.
 					continue
 				name = m.group(1)
 				bare_name = name[1:-1]
-				if name[0] == '"':
+				if name.startswith(b'"'):
 					# Canonicalize paths to non-system headers
-					if name == '"dxxsconf.h"':
+					if name == b'"dxxsconf.h"':
 						# Ignore generated header here.  PCH generation
 						# will insert it in the right order.
 						continue
-					if name == '"valptridx.tcc"':
+					if name == b'"valptridx.tcc"':
 						# Exclude tcc file from PCH.  It is not meant to
 						# be included in every file.  Starting in gcc-7,
 						# static functions defined in valptridx.tcc
@@ -2940,7 +3026,7 @@ class PCHManager(object):
 						continue
 					if header_search_path is None:
 						header_search_path = [
-							d for d in ([os.path.dirname(str(source_filenode))] + env['CPPPATH'])
+							d.encode() for d in ([os.path.dirname(str(source_filenode))] + env['CPPPATH'])
 							# Filter out SDL paths
 							if not d.startswith('/')
 						]
@@ -2950,7 +3036,7 @@ class PCHManager(object):
 						if os_path_exists(effective_name):
 							name = effective_name
 							break
-					if name is None:
+					else:
 						# name is None if:
 						# - A system header was included using quotes.
 						#
@@ -2961,25 +3047,25 @@ class PCHManager(object):
 						# looks inside branches that the C preprocessor
 						# will evaluate as false.
 						continue
-					name = env.File(name)
+					name = env.File(name.decode())
 				candidates[name].add(tuple(guard))
-			elif directive == 'endif':
+			elif directive == b'endif':
 				# guard should always be True here, but test to avoid
 				# ugly errors if scanning an ill-formed source file.
 				if guard:
 					guard.pop()
-			elif directive == 'else':
+			elif directive == b'else':
 				# #else is handled separately because it has no
 				# arguments
-				guard.append('#%s' % directive)
+				guard.append(b'#%s' % (directive))
 			elif directive in (
-				'elif',
-				'if',
-				'ifdef',
-				'ifndef',
+				b'elif',
+				b'if',
+				b'ifdef',
+				b'ifndef',
 			):
-				guard.append('#%s %s' % (directive, m.group(2)))
-			elif directive not in ('error',):
+				guard.append(b'#%s %s' % (directive, m.group(2)))
+			elif directive not in (b'error',):
 				raise SCons.Errors.StopError("Scanning %s found unhandled C preprocessor directive %r" % (str(source_filenode), directive))
 		return cls.ScannedFile(candidates)
 
@@ -2994,16 +3080,16 @@ class PCHManager(object):
 		# included with this set of guards defined).
 		syscpp_includes = defaultdict(list)
 		owncpp_includes = defaultdict(list) if own_header_inclusion_threshold else None
-		for included_file, usage_dict in self.__files_included.iteritems():
-			if isinstance(included_file, str):
+		for included_file, usage_dict in get_dictionary_item_view(self.__files_included):
+			if isinstance(included_file, (bytes, str)):
 				# System header
 				cpp_includes = syscpp_includes
-				name = included_file
+				name = (included_file.encode() if isinstance(included_file, str) else included_file)
 				threshold = own_header_inclusion_threshold if sys_header_inclusion_threshold is None else sys_header_inclusion_threshold
 			else:
 				# Own header
 				cpp_includes = owncpp_includes
-				name = '"%s"' % included_file
+				name = b'"%s"' % (str(included_file).encode())
 				threshold = own_header_inclusion_threshold
 			if not threshold:
 				continue
@@ -3014,7 +3100,7 @@ class PCHManager(object):
 			# conditional includes.
 			guards = \
 				[((), g)] if (g >= threshold) else \
-				sorted(usage_dict.iteritems(), reverse=True)
+				sorted(get_dictionary_item_view(usage_dict), reverse=True)
 			while guards:
 				preprocessor_guard_directives, local_count_seen = guards.pop()
 				total_count_seen = local_count_seen
@@ -3051,8 +3137,8 @@ class PCHManager(object):
 		# if the result eventually shows that pch.cpp has not changed.
 		# The C preprocessor will only run over the file when it is
 		# actually changed and is processed to build a new .gch file.
-		for preprocessor_guard_directives, included_file_tuples in sorted(cpp_includes.iteritems()):
-			generated_pch_lines.append('')
+		for preprocessor_guard_directives, included_file_tuples in sorted(get_dictionary_item_view(cpp_includes)):
+			generated_pch_lines.append(b'')
 			generated_pch_lines.extend(preprocessor_guard_directives)
 			# local_count_seen is the direct usage count for this
 			# combination of preprocessor_guard_directives.
@@ -3063,11 +3149,12 @@ class PCHManager(object):
 			# when it reaches threshold, so it may undercount actual
 			# usage.
 			for (name, local_count_seen, total_count_seen) in sorted(included_file_tuples):
-				generated_pch_lines.append('#include %s\t// %u %u' % (name, local_count_seen, total_count_seen))
+				assert(isinstance(name, bytes)), repr(name)
+				generated_pch_lines.append(b'#include %s\t// %u %u' % (name, local_count_seen, total_count_seen))
 			# d[2] == l if d is '#else' or d is '#elif'
 			# Only generate #endif when d is a '#if*' directive, since
 			# '#else/#elif' do not introduce a new scope.
-			generated_pch_lines.extend('#endif' for d in preprocessor_guard_directives if d[2] != 'l')
+			generated_pch_lines.extend(b'#endif' for d in preprocessor_guard_directives if d[2:3] != b'l')
 		return generated_pch_lines
 
 	def _compute_indirect_includes(self):
@@ -3098,8 +3185,8 @@ class PCHManager(object):
 		#	}
 		# }
 		files_included = self.__files_included
-		for scanned_file in self._instance_scanned_files.itervalues():
-			for included_file, guards in scanned_file.candidates.iteritems():
+		for scanned_file in get_dictionary_value_view(self._instance_scanned_files):
+			for included_file, guards in get_dictionary_item_view(scanned_file.candidates):
 				i = files_included[included_file]
 				for g in guards:
 					i[g] += 1
@@ -3114,7 +3201,7 @@ class PCHManager(object):
 		includes_to_check = sorted(files_included.iterkeys(), key=str)
 		while includes_to_check:
 			included_file = includes_to_check.pop()
-			if isinstance(included_file, str):
+			if isinstance(included_file, (bytes, str)):
 				# System headers are str.  Internal headers are
 				# fs.File.
 				continue
@@ -3124,8 +3211,8 @@ class PCHManager(object):
 				# Header will be unconditionally included in the PCH.
 				continue
 			f = self.record_file(self.env, File(included_file))
-			for nested_included_file, nested_guards in sorted(f.candidates.iteritems(), key=str):
-				if not isinstance(included_file, str) and not nested_included_file in files_included:
+			for nested_included_file, nested_guards in sorted(get_dictionary_item_view(f.candidates), key=str):
+				if not isinstance(included_file, (bytes, str)) and not nested_included_file in files_included:
 					# If the header is a system header, it will be
 					# str.  Skip system headers.
 					#
@@ -3174,7 +3261,7 @@ class PCHManager(object):
 			return
 		self._compute_pch_text()
 		syspch_lines = self.__generated_syspch_lines
-		pch_begin_banner_template = '''
+		pch_begin_banner_template = b'''
 // BEGIN PCH GENERATED FILE
 // %r
 // Threshold=%u
@@ -3182,7 +3269,7 @@ class PCHManager(object):
 // SConf generated header
 #include "dxxsconf.h"
 '''
-		pch_end_banner = ('''
+		pch_end_banner = (b'''
 // END PCH GENERATED FILE
 ''',)
 		if self.syspch_object_node:
@@ -3201,9 +3288,9 @@ class PCHManager(object):
 			self._register_write_pch_inclusion(self.ownpch_cpp_node,
 				(
 					(pch_begin_banner_template % (self.ownpch_cpp_filename, self.user_settings.pch),),
-					('// System headers' if syspch_lines else '',),
+					(b'// System headers' if syspch_lines else b'',),
 					syspch_lines,
-					('''
+					(b'''
 // Own headers
 ''',),
 					self.__generated_ownpch_lines,
@@ -3221,8 +3308,8 @@ class PCHManager(object):
 		# Strip C++ single line comments so that changes in comments are
 		# ignored when deciding whether pch.cpp needs to be rebuilt.
 		env = self.env
-		text = '\n'.join(itertools.chain.from_iterable(lineseq))
-		v = env.Value(self._re_singleline_comments_sub('', text))
+		text = b'\n'.join(itertools.chain.from_iterable(lineseq))
+		v = env.Value(self._re_singleline_comments_sub(b'', text))
 		v.__generated_pch_text = text
 		# Use env.Command instead of env.Textfile or env.Substfile since
 		# the latter use their input both for freshness and as a data
@@ -3238,6 +3325,14 @@ class DXXCommon(LazyObjectConstructor):
 	VERSION_MICRO = 100
 	DXX_VERSION_SEQ = ','.join([str(VERSION_MAJOR), str(VERSION_MINOR), str(VERSION_MICRO)])
 	pch_manager = None
+	runtime_test_boost_tests = None
+
+	class RuntimeTest(LazyObjectConstructor):
+		nodefaultlibs = True
+		def __init__(self,target,source):
+			self.target = target
+			self.source = LazyObjectConstructor.create_lazy_object_getter(source)
+
 	@cached_property
 	def program_message_prefix(self):
 		return '%s.%d' % (self.PROGRAM_NAME, self.program_instance)
@@ -3288,7 +3383,7 @@ class DXXCommon(LazyObjectConstructor):
 					# Mix in CRC of CXXFLAGS to get reasonable uniqueness
 					# when flags are changed.  A full hash is
 					# unnecessary here.
-					crc = binascii.crc32(compiler_flags)
+					crc = binascii.crc32(compiler_flags.encode())
 					if crc < 0:
 						crc = crc + 0x100000000
 					fields.append('{:08x}'.format(crc))
@@ -3350,7 +3445,19 @@ class DXXCommon(LazyObjectConstructor):
 			try:
 				return tests.__configure_tests
 			except AttributeError:
-				tests.__configure_tests = c = filter(_filter, tests.implicit_tests + tests.custom_tests)
+				# Freeze the results into a tuple, to prevent accidental
+				# modification later.
+				#
+				# In Python 2, this is merely a safety feature and could
+				# be skipped.
+				#
+				# In Python 3, filter returns an iterable that is
+				# exhausted after one full traversal.  Since this object
+				# is intended to be retained and reused, the first
+				# traversal must copy the results into a container that
+				# can be walked multiple times.  A tuple serves this
+				# purpose, in addition to freezing the contents.
+				tests.__configure_tests = c = tuple(filter(_filter, tests.implicit_tests + tests.custom_tests))
 				return c
 		@classmethod
 		def __get_has_git_dir(cls):
@@ -3442,7 +3549,7 @@ class DXXCommon(LazyObjectConstructor):
 					('opengl', True, 'build with OpenGL support'),
 					('opengles', self.default_opengles, 'build with OpenGL ES support'),
 					('editor', False, 'include editor into build (!EXPERIMENTAL!)'),
-					('sdl2', False, 'use libSDL2+SDL2_mixer (!DEVELOPERS ONLY - KNOWN BROKEN!)'),
+					('sdl2', False, 'use libSDL2+SDL2_mixer (!EXPERIMENTAL!)'),
 					('sdlmixer', True, 'build with SDL_Mixer support for sound and music (includes external music support)'),
 					('ipv6', False, 'enable UDP/IPv6 for multiplayer'),
 					('use_udp', True, 'enable UDP support'),
@@ -3455,6 +3562,7 @@ class DXXCommon(LazyObjectConstructor):
 					('words_need_alignment', self.default_words_need_alignment, 'align words at load (needed for many non-x86 systems)'),
 					('register_compile_target', True, 'report compile targets to SCons core'),
 					('register_cpp_output_targets', None, None),
+					('register_runtime_test_link_targets', False, None),
 					('enable_build_failure_summary', True, 'print failed nodes and their commands'),
 					('wrap_PHYSFS_read', False, None),
 					('wrap_PHYSFS_write', False, None),
@@ -3503,7 +3611,7 @@ class DXXCommon(LazyObjectConstructor):
 				'arguments': (
 					('host_endian', None, 'endianness of host platform', {'allowed_values' : ('little', 'big')}),
 					('host_platform', sys.platform.rstrip('0123456789'), 'cross-compile to specified platform', {'allowed_values' : ('darwin', 'linux', 'openbsd', 'win32')}),
-					('screenshot', 'png', 'screenshot file format', {'allowed_values' : ('legacy', 'png')}),
+					('screenshot', 'png', 'screenshot file format', {'allowed_values' : ('none', 'legacy', 'png')}),
 				),
 			},
 			{
@@ -3553,7 +3661,8 @@ class DXXCommon(LazyObjectConstructor):
 					if stack:
 						for n in names:
 							add_variable(self._generic_variable(key='%s_stop' % n, help=None, default=None))
-		def read_variables(self,variables,d):
+		def read_variables(self,program,variables,d):
+			verbose_settings_init = os.getenv('DXX_SCONS_DEBUG_USER_SETTINGS')
 			for (namelist,cname,dvalue,stack) in self.known_variables:
 				value = None
 				found_value = False
@@ -3563,23 +3672,40 @@ class DXXCommon(LazyObjectConstructor):
 						found_value = True
 						if stack:
 							if callable(v):
+								if verbose_settings_init:
+									message(program, 'append to stackable %r from %r by call to %r(%r, %r, %r)' % (cname, n, v, dvalue, value, stack))
 								value = v(dvalue=dvalue, value=value, stack=stack)
 							else:
 								if value:
-									value = stack.join([value, v])
+									value = (value, v)
+									if verbose_settings_init:
+										message(program, 'append to stackable %r from %r by join of %r.join(%r, %r)' % (cname, n, stack, value))
+									value = stack.join(value)
 								else:
+									if verbose_settings_init:
+										message(program, 'assign to stackable %r from %r value %r' % (cname, n, v))
 									value = v
-							if d.get('%s_stop' % n, None):
+							stop = '%s_stop' % n
+							if d.get(stop, None):
+								if verbose_settings_init:
+									message(program, 'terminating search early due to presence of %s' % stop)
 								break
 							continue
+						if verbose_settings_init:
+							message(program, 'assign to non-stackable %r from %r value %r' % (cname, n, v))
 						value = v
 						break
 					except KeyError as e:
 						pass
 				if not found_value:
-					value = dvalue
-				if callable(value):
-					value = value()
+					if callable(dvalue):
+						value = dvalue()
+						if verbose_settings_init:
+							message(program, 'assign to %r by default value %r from call %r' % (cname, value, dvalue))
+					else:
+						value = dvalue
+						if verbose_settings_init:
+							message(program, 'assign to %r by default value %r from direct' % (cname, value))
 				setattr(self, cname, value)
 			if self.builddir != '' and self.builddir[-1:] != '/':
 				self.builddir += '/'
@@ -3817,6 +3943,8 @@ class DXXCommon(LazyObjectConstructor):
 			# create_header_targets() does not call the PCHManager
 			# StaticObject hook.
 			self.create_header_targets()
+		if user_settings.register_runtime_test_link_targets:
+			self._register_runtime_test_link_targets()
 		configure_pch_flags = archive.configure_pch_flags
 		if configure_pch_flags:
 			self.pch_manager = PCHManager(self.user_settings, self.env, self.srcdir, configure_pch_flags, archive.pch_manager)
@@ -3832,7 +3960,7 @@ class DXXCommon(LazyObjectConstructor):
 			elif c == '\n':
 				r += r'\n'
 			else:
-				r += r'\\x%s' % b2a_hex(c)
+				r += r'\\x%s' % b2a_hex(c.encode()).decode()
 				prior = True
 				continue
 			prior = False
@@ -3841,11 +3969,13 @@ class DXXCommon(LazyObjectConstructor):
 	@staticmethod
 	def _encode_cppdefine_for_identifier(user_settings,s,b2a_base64=binascii.b2a_base64):
 		extended_identifiers = user_settings._dxx_extended_identifiers
-		return '"%s"' % b2a_base64(s)	\
+		return '"%s"' % (b2a_base64(s.encode())	\
 			.rstrip()	\
+			.decode()	\
 			.replace('+', extended_identifiers[0])	\
 			.replace('/', extended_identifiers[1])	\
-			.replace('=', extended_identifiers[2])
+			.replace('=', extended_identifiers[2])	\
+			)
 
 	def prepare_environment(self):
 		# Prettier build messages......
@@ -3981,11 +4111,32 @@ class DXXCommon(LazyObjectConstructor):
 		user_settings = self.user_settings
 		# Get traditional compiler environment variables
 		kw = {}
-		for cc in ('CXX', 'RC'):
+		chost_aware_tools = ('CXX', 'RC')
+		for cc in chost_aware_tools:
 			value = getattr(user_settings, cc)
 			if value is not None:
 				kw[cc] = value
-		env = Environment(ENV = os.environ, tools = platform_settings.tools + ('textfile',), **kw)
+		tools = platform_settings.tools + ('textfile',)
+		env = Environment(ENV = os.environ, tools = tools, **kw)
+		CHOST = user_settings.CHOST
+		if CHOST:
+			denv = None
+			for cc in chost_aware_tools:
+				value = kw.get(cc)
+				if value is not None:
+					# If the user set a value, that value is always
+					# used.
+					continue
+				if denv is None:
+					# Lazy load denv.
+					denv = Environment(tools = tools)
+				# If the option in the base environment, ignoring both
+				# user_settings and the process environment, matches the
+				# option in the customized environment, then assume that
+				# this is an SCons default, not a user-chosen value.
+				value = denv.get(cc)
+				if value and env.get(cc) == value:
+					env[cc] = '{}-{}'.format(CHOST, value)
 		platform_settings.adjust_environment(self, env)
 		return env
 
@@ -4016,61 +4167,78 @@ class DXXCommon(LazyObjectConstructor):
 				LIBS = ['bcm_host'],
 			)
 
+	def _register_runtime_test_link_targets(self):
+		runtime_test_boost_tests = self.runtime_test_boost_tests
+		if not runtime_test_boost_tests:
+			return
+		env = self.env
+		user_settings = self.user_settings
+		builddir = env.Dir(user_settings.builddir).Dir(self.srcdir)
+		for test in runtime_test_boost_tests:
+			LIBS = [] if test.nodefaultlibs else env['LIBS'][:]
+			LIBS.append('boost_unit_test_framework')
+			env.Program(target=builddir.File(test.target), source=test.source(self), LIBS=LIBS)
+
 class DXXArchive(DXXCommon):
 	PROGRAM_NAME = 'DXX-Archive'
 	_argument_prefix_list = None
 	srcdir = 'common'
 	target = 'dxx-common'
+	RuntimeTest = DXXCommon.RuntimeTest
+	runtime_test_boost_tests = (
+		RuntimeTest('test-valptridx-range', (
+			'common/unittest/valptridx-range.cpp',
+			))
+			,)
+	del RuntimeTest
 
 	def get_objects_common(self,
-		__get_objects_common=DXXCommon.create_lazy_object_getter([os.path.join(srcdir, f) for f in [
-'2d/2dsline.cpp',
-'2d/bitblt.cpp',
-'2d/bitmap.cpp',
-'2d/box.cpp',
-'2d/canvas.cpp',
-'2d/circle.cpp',
-'2d/disc.cpp',
-'2d/gpixel.cpp',
-'2d/line.cpp',
-'2d/pixel.cpp',
-'2d/rect.cpp',
-'2d/rle.cpp',
-'2d/scalec.cpp',
-'3d/draw.cpp',
-'3d/globvars.cpp',
-'3d/instance.cpp',
-'3d/matrix.cpp',
-'3d/points.cpp',
-'3d/rod.cpp',
-'3d/setup.cpp',
-'arch/sdl/event.cpp',
-'arch/sdl/joy.cpp',
-'arch/sdl/key.cpp',
-'arch/sdl/mouse.cpp',
-'arch/sdl/timer.cpp',
-'arch/sdl/window.cpp',
-'main/cli.cpp',
-'main/cmd.cpp',
-'main/cvar.cpp',
-'maths/fixc.cpp',
-'maths/rand.cpp',
-'maths/tables.cpp',
-'maths/vecmat.cpp',
-'mem/mem.cpp',
-'misc/error.cpp',
-'misc/hash.cpp',
-'misc/hmp.cpp',
-'misc/ignorecase.cpp',
-'misc/strutil.cpp',
-'misc/vgrphys.cpp',
-'misc/vgwphys.cpp',
-]
-]), \
-		__get_objects_use_sdl1=DXXCommon.create_lazy_object_getter([os.path.join(srcdir, f) for f in [
-'arch/sdl/rbaudio.cpp',
-]
-])
+		__get_objects_common=DXXCommon.create_lazy_object_getter((
+'common/2d/2dsline.cpp',
+'common/2d/bitblt.cpp',
+'common/2d/bitmap.cpp',
+'common/2d/box.cpp',
+'common/2d/canvas.cpp',
+'common/2d/circle.cpp',
+'common/2d/disc.cpp',
+'common/2d/gpixel.cpp',
+'common/2d/line.cpp',
+'common/2d/pixel.cpp',
+'common/2d/rect.cpp',
+'common/2d/rle.cpp',
+'common/2d/scalec.cpp',
+'common/3d/draw.cpp',
+'common/3d/globvars.cpp',
+'common/3d/instance.cpp',
+'common/3d/matrix.cpp',
+'common/3d/points.cpp',
+'common/3d/rod.cpp',
+'common/3d/setup.cpp',
+'common/arch/sdl/event.cpp',
+'common/arch/sdl/joy.cpp',
+'common/arch/sdl/key.cpp',
+'common/arch/sdl/mouse.cpp',
+'common/arch/sdl/timer.cpp',
+'common/arch/sdl/window.cpp',
+'common/main/cli.cpp',
+'common/main/cmd.cpp',
+'common/main/cvar.cpp',
+'common/maths/fixc.cpp',
+'common/maths/rand.cpp',
+'common/maths/tables.cpp',
+'common/maths/vecmat.cpp',
+'common/mem/mem.cpp',
+'common/misc/error.cpp',
+'common/misc/hash.cpp',
+'common/misc/hmp.cpp',
+'common/misc/ignorecase.cpp',
+'common/misc/strutil.cpp',
+'common/misc/vgrphys.cpp',
+'common/misc/vgwphys.cpp',
+)), \
+		__get_objects_use_sdl1=DXXCommon.create_lazy_object_getter((
+'common/arch/sdl/rbaudio.cpp',
+))
 		):
 		value = list(__get_objects_common(self))
 		extend = value.extend
@@ -4079,57 +4247,53 @@ class DXXArchive(DXXCommon):
 		extend(self.platform_settings.get_platform_objects())
 		return value
 
-	get_objects_editor = DXXCommon.create_lazy_object_getter([os.path.join(srcdir, f) for f in [
-'editor/autosave.cpp',
-'editor/func.cpp',
-'ui/button.cpp',
-'ui/checkbox.cpp',
-'ui/dialog.cpp',
-'ui/file.cpp',
-'ui/gadget.cpp',
-'ui/icon.cpp',
-'ui/inputbox.cpp',
-'ui/keypad.cpp',
-'ui/keypress.cpp',
-'ui/listbox.cpp',
-'ui/menu.cpp',
-'ui/menubar.cpp',
-'ui/message.cpp',
-'ui/radio.cpp',
-'ui/scroll.cpp',
-'ui/ui.cpp',
-'ui/uidraw.cpp',
-'ui/userbox.cpp'
-]
-])
+	get_objects_editor = DXXCommon.create_lazy_object_getter((
+'common/editor/autosave.cpp',
+'common/editor/func.cpp',
+'common/ui/button.cpp',
+'common/ui/checkbox.cpp',
+'common/ui/dialog.cpp',
+'common/ui/file.cpp',
+'common/ui/gadget.cpp',
+'common/ui/icon.cpp',
+'common/ui/inputbox.cpp',
+'common/ui/keypad.cpp',
+'common/ui/keypress.cpp',
+'common/ui/listbox.cpp',
+'common/ui/menu.cpp',
+'common/ui/menubar.cpp',
+'common/ui/message.cpp',
+'common/ui/radio.cpp',
+'common/ui/scroll.cpp',
+'common/ui/ui.cpp',
+'common/ui/uidraw.cpp',
+'common/ui/userbox.cpp',
+))
 	# for non-ogl
-	get_objects_arch_sdl = DXXCommon.create_lazy_object_getter([os.path.join(srcdir, f) for f in [
-'3d/clipper.cpp',
-'texmap/ntmap.cpp',
-'texmap/scanline.cpp',
-'texmap/tmapflat.cpp'
-]
-])
+	get_objects_arch_sdl = DXXCommon.create_lazy_object_getter((
+'common/3d/clipper.cpp',
+'common/texmap/ntmap.cpp',
+'common/texmap/scanline.cpp',
+'common/texmap/tmapflat.cpp',
+))
 	# for ogl
-	get_objects_arch_ogl = DXXCommon.create_lazy_object_getter([os.path.join(srcdir, f) for f in [
-'arch/ogl/ogl_extensions.cpp',
-'arch/ogl/ogl_sync.cpp'
-]
-])
-	get_objects_arch_sdlmixer = DXXCommon.create_lazy_object_getter([os.path.join(srcdir, f) for f in [
-'arch/sdl/digi_mixer_music.cpp',
-]
-])
+	get_objects_arch_ogl = DXXCommon.create_lazy_object_getter((
+'common/arch/ogl/ogl_extensions.cpp',
+'common/arch/ogl/ogl_sync.cpp',
+))
+	get_objects_arch_sdlmixer = DXXCommon.create_lazy_object_getter((
+'common/arch/sdl/digi_mixer_music.cpp',
+))
 	class Win32PlatformSettings(DXXCommon.Win32PlatformSettings):
-		get_platform_objects = LazyObjectConstructor.create_lazy_object_getter([
+		get_platform_objects = LazyObjectConstructor.create_lazy_object_getter((
 'common/arch/win32/except.cpp',
-'common/arch/win32/messagebox.cpp'
-])
+'common/arch/win32/messagebox.cpp',
+))
 	class DarwinPlatformSettings(DXXCommon.DarwinPlatformSettings):
-		get_platform_objects = LazyObjectConstructor.create_lazy_object_getter([
+		get_platform_objects = LazyObjectConstructor.create_lazy_object_getter((
 			'common/arch/cocoa/messagebox.mm',
-			'common/arch/cocoa/SDLMain.m'
-		])
+			'common/arch/cocoa/SDLMain.m',
+		))
 
 	def __init__(self,user_settings):
 		DXXCommon.__init__(self)
@@ -4241,167 +4405,166 @@ class DXXProgram(DXXCommon):
 		return os.path.join(os.path.dirname(name), '.%s.%s' % (self.target, os.path.splitext(os.path.basename(name))[0]))
 	def _apply_env_version_seq(self,env,_empty={}):
 		return _empty if self.user_settings.pch else {'CPPDEFINES' : env['CPPDEFINES'] + [('DXX_VERSION_SEQ', self.DXX_VERSION_SEQ)]}
-	get_objects_similar_arch_ogl = DXXCommon.create_lazy_object_getter([{
-		'source':[os.path.join('similar', f) for f in [
-'arch/ogl/gr.cpp',
-'arch/ogl/ogl.cpp',
-]
-],
-		'transform_target':_apply_target_name,
-	}])
-	get_objects_similar_arch_sdl = DXXCommon.create_lazy_object_getter([{
-		'source':[os.path.join('similar', f) for f in [
-'arch/sdl/gr.cpp',
-]
-],
-		'transform_target':_apply_target_name,
-	}])
-	get_objects_similar_arch_sdlmixer = DXXCommon.create_lazy_object_getter([{
-		'source':[os.path.join('similar', f) for f in [
-'arch/sdl/digi_mixer.cpp',
-'arch/sdl/jukebox.cpp'
-]
-],
-		'transform_target':_apply_target_name,
-	}])
-	__get_objects_common = DXXCommon.create_lazy_object_getter([{
-		'source':[os.path.join('similar', f) for f in (
-'2d/font.cpp',
-'2d/palette.cpp',
-'2d/pcx.cpp',
-'3d/interp.cpp',
-'arch/sdl/digi.cpp',
-'arch/sdl/digi_audio.cpp',
-'arch/sdl/init.cpp',
-'main/ai.cpp',
-'main/aipath.cpp',
-'main/automap.cpp',
-'main/bm.cpp',
-'main/cntrlcen.cpp',
-'main/collide.cpp',
-'main/config.cpp',
-'main/console.cpp',
-'main/controls.cpp',
-'main/credits.cpp',
-'main/digiobj.cpp',
-'main/effects.cpp',
-'main/endlevel.cpp',
-'main/fireball.cpp',
-'main/fuelcen.cpp',
-'main/fvi.cpp',
-'main/game.cpp',
-'main/gamecntl.cpp',
-'main/gamefont.cpp',
-'main/gamemine.cpp',
-'main/gamerend.cpp',
-'main/gamesave.cpp',
-'main/gameseg.cpp',
-'main/gameseq.cpp',
-'main/gauges.cpp',
-'main/hostage.cpp',
-'main/hud.cpp',
-'main/iff.cpp',
-'main/kmatrix.cpp',
-'main/laser.cpp',
-'main/lighting.cpp',
-'main/menu.cpp',
-'main/mglobal.cpp',
-'main/mission.cpp',
-'main/morph.cpp',
-'main/multi.cpp',
-'main/multibot.cpp',
-'main/newdemo.cpp',
-'main/newmenu.cpp',
-'main/object.cpp',
-'main/paging.cpp',
-'main/physics.cpp',
-'main/piggy.cpp',
-'main/player.cpp',
-'main/polyobj.cpp',
-'main/powerup.cpp',
-'main/render.cpp',
-'main/robot.cpp',
-'main/scores.cpp',
-'main/segment.cpp',
-'main/slew.cpp',
-'main/songs.cpp',
-'main/state.cpp',
-'main/switch.cpp',
-'main/terrain.cpp',
-'main/texmerge.cpp',
-'main/text.cpp',
-'main/titles.cpp',
-'main/vclip.cpp',
-'main/wall.cpp',
-'main/weapon.cpp',
-'misc/args.cpp',
-)
-],
-		'transform_target':_apply_target_name,
+	get_objects_similar_arch_ogl = DXXCommon.create_lazy_object_getter(({
+		'source':(
+'similar/arch/ogl/gr.cpp',
+'similar/arch/ogl/ogl.cpp',
+),
+		DXXCommon.key_transform_target:_apply_target_name,
+	},
+	))
+	get_objects_similar_arch_sdl = DXXCommon.create_lazy_object_getter(({
+		'source':(
+'similar/arch/sdl/gr.cpp',
+),
+		DXXCommon.key_transform_target:_apply_target_name,
+	},
+	))
+	get_objects_similar_arch_sdlmixer = DXXCommon.create_lazy_object_getter(({
+		'source':(
+'similar/arch/sdl/digi_mixer.cpp',
+'similar/arch/sdl/jukebox.cpp',
+),
+		DXXCommon.key_transform_target:_apply_target_name,
+	},
+	))
+	__get_objects_common = DXXCommon.create_lazy_object_getter(({
+		'source':(
+'similar/2d/font.cpp',
+'similar/2d/palette.cpp',
+'similar/2d/pcx.cpp',
+'similar/3d/interp.cpp',
+'similar/arch/sdl/digi.cpp',
+'similar/arch/sdl/digi_audio.cpp',
+'similar/arch/sdl/init.cpp',
+'similar/main/ai.cpp',
+'similar/main/aipath.cpp',
+'similar/main/automap.cpp',
+'similar/main/bm.cpp',
+'similar/main/cntrlcen.cpp',
+'similar/main/collide.cpp',
+'similar/main/config.cpp',
+'similar/main/console.cpp',
+'similar/main/controls.cpp',
+'similar/main/credits.cpp',
+'similar/main/digiobj.cpp',
+'similar/main/effects.cpp',
+'similar/main/endlevel.cpp',
+'similar/main/fireball.cpp',
+'similar/main/fuelcen.cpp',
+'similar/main/fvi.cpp',
+'similar/main/game.cpp',
+'similar/main/gamecntl.cpp',
+'similar/main/gamefont.cpp',
+'similar/main/gamemine.cpp',
+'similar/main/gamerend.cpp',
+'similar/main/gamesave.cpp',
+'similar/main/gameseg.cpp',
+'similar/main/gameseq.cpp',
+'similar/main/gauges.cpp',
+'similar/main/hostage.cpp',
+'similar/main/hud.cpp',
+'similar/main/iff.cpp',
+'similar/main/kmatrix.cpp',
+'similar/main/laser.cpp',
+'similar/main/lighting.cpp',
+'similar/main/menu.cpp',
+'similar/main/mglobal.cpp',
+'similar/main/mission.cpp',
+'similar/main/morph.cpp',
+'similar/main/multi.cpp',
+'similar/main/multibot.cpp',
+'similar/main/newdemo.cpp',
+'similar/main/newmenu.cpp',
+'similar/main/object.cpp',
+'similar/main/paging.cpp',
+'similar/main/physics.cpp',
+'similar/main/piggy.cpp',
+'similar/main/player.cpp',
+'similar/main/polyobj.cpp',
+'similar/main/powerup.cpp',
+'similar/main/render.cpp',
+'similar/main/robot.cpp',
+'similar/main/scores.cpp',
+'similar/main/segment.cpp',
+'similar/main/slew.cpp',
+'similar/main/songs.cpp',
+'similar/main/state.cpp',
+'similar/main/switch.cpp',
+'similar/main/terrain.cpp',
+'similar/main/texmerge.cpp',
+'similar/main/text.cpp',
+'similar/main/titles.cpp',
+'similar/main/vclip.cpp',
+'similar/main/wall.cpp',
+'similar/main/weapon.cpp',
+'similar/misc/args.cpp',
+),
+		DXXCommon.key_transform_target:_apply_target_name,
 	}, {
 		'source': (
 'similar/main/inferno.cpp',
 ),
-		'transform_env': lambda self, env: {'CPPDEFINES' : env['CPPDEFINES'] + env.__dxx_CPPDEFINE_SHAREPATH + env.__dxx_CPPDEFINE_git_version},
-		'transform_target':_apply_target_name,
+		DXXCommon.key_transform_env: lambda self, env: {'CPPDEFINES' : env['CPPDEFINES'] + env.__dxx_CPPDEFINE_SHAREPATH + env.__dxx_CPPDEFINE_git_version},
+		DXXCommon.key_transform_target:_apply_target_name,
 	}, {
 		'source': (
 'similar/main/kconfig.cpp',
 ),
-		'transform_object':WrapKConfigStaticObject,
-		'transform_target':_apply_target_name,
+		DXXCommon.key_transform_object:WrapKConfigStaticObject,
+		DXXCommon.key_transform_target:_apply_target_name,
 	}, {
 		'source': (
 'similar/misc/physfsx.cpp',
 ),
-		'transform_env': lambda self, env: {'CPPDEFINES' : env['CPPDEFINES'] + env.__dxx_CPPDEFINE_SHAREPATH},
-		'transform_target':_apply_target_name,
+		DXXCommon.key_transform_env: lambda self, env: {'CPPDEFINES' : env['CPPDEFINES'] + env.__dxx_CPPDEFINE_SHAREPATH},
+		DXXCommon.key_transform_target:_apply_target_name,
 	}, {
 		'source': (
 'similar/main/playsave.cpp',
 ),
-		'transform_env': _apply_env_version_seq,
-		'transform_target':_apply_target_name,
-	}
-	])
-	get_objects_editor = DXXCommon.create_lazy_object_getter([{
-		'source':[os.path.join('similar', f) for f in [
-'editor/centers.cpp',
-'editor/curves.cpp',
-'main/dumpmine.cpp',
-'editor/eglobal.cpp',
-'editor/elight.cpp',
-'editor/eobject.cpp',
-'editor/eswitch.cpp',
-'editor/group.cpp',
-'editor/info.cpp',
-'editor/kbuild.cpp',
-'editor/kcurve.cpp',
-'editor/kfuncs.cpp',
-'editor/kgame.cpp',
-'editor/khelp.cpp',
-'editor/kmine.cpp',
-'editor/ksegmove.cpp',
-'editor/ksegsel.cpp',
-'editor/ksegsize.cpp',
-'editor/ktmap.cpp',
-'editor/kview.cpp',
-'editor/med.cpp',
-'editor/meddraw.cpp',
-'editor/medmisc.cpp',
-'editor/medrobot.cpp',
-'editor/medsel.cpp',
-'editor/medwall.cpp',
-'editor/mine.cpp',
-'editor/objpage.cpp',
-'editor/segment.cpp',
-'editor/seguvs.cpp',
-'editor/texpage.cpp',
-'editor/texture.cpp',
-]
-],
-		'transform_target':_apply_target_name,
-	}])
+		DXXCommon.key_transform_env: _apply_env_version_seq,
+		DXXCommon.key_transform_target:_apply_target_name,
+	},
+	))
+	get_objects_editor = DXXCommon.create_lazy_object_getter(({
+		'source':(
+'similar/editor/centers.cpp',
+'similar/editor/curves.cpp',
+'similar/main/dumpmine.cpp',
+'similar/editor/eglobal.cpp',
+'similar/editor/elight.cpp',
+'similar/editor/eobject.cpp',
+'similar/editor/eswitch.cpp',
+'similar/editor/group.cpp',
+'similar/editor/info.cpp',
+'similar/editor/kbuild.cpp',
+'similar/editor/kcurve.cpp',
+'similar/editor/kfuncs.cpp',
+'similar/editor/kgame.cpp',
+'similar/editor/khelp.cpp',
+'similar/editor/kmine.cpp',
+'similar/editor/ksegmove.cpp',
+'similar/editor/ksegsel.cpp',
+'similar/editor/ksegsize.cpp',
+'similar/editor/ktmap.cpp',
+'similar/editor/kview.cpp',
+'similar/editor/med.cpp',
+'similar/editor/meddraw.cpp',
+'similar/editor/medmisc.cpp',
+'similar/editor/medrobot.cpp',
+'similar/editor/medsel.cpp',
+'similar/editor/medwall.cpp',
+'similar/editor/mine.cpp',
+'similar/editor/objpage.cpp',
+'similar/editor/segment.cpp',
+'similar/editor/seguvs.cpp',
+'similar/editor/texpage.cpp',
+'similar/editor/texture.cpp',
+),
+		DXXCommon.key_transform_target:_apply_target_name,
+	},
+	))
 
 	class UserSettings(DXXCommon.UserSettings):
 		@property
@@ -4453,13 +4616,14 @@ class DXXProgram(DXXCommon):
 
 	def get_objects_common(self,
 		__get_objects_common=__get_objects_common,
-		__get_objects_use_udp=DXXCommon.create_lazy_object_getter([{
+		__get_objects_use_udp=DXXCommon.create_lazy_object_getter(({
 		'source':(
 'similar/main/net_udp.cpp',
 ),
-		'transform_env': _apply_env_version_seq,
-		'transform_target':_apply_target_name,
-	}])
+		DXXCommon.key_transform_env: _apply_env_version_seq,
+		DXXCommon.key_transform_target:_apply_target_name,
+	},
+	))
 		):
 		value = list(__get_objects_common(self))
 		extend = value.extend
@@ -4482,7 +4646,7 @@ class DXXProgram(DXXCommon):
 
 	def init(self,substenv):
 		user_settings = self.user_settings
-		user_settings.read_variables(self.variables, substenv)
+		user_settings.read_variables(self, self.variables, substenv)
 		archive = DXXProgram.static_archive_construction.get(user_settings.builddir, None)
 		if archive is None:
 			DXXProgram.static_archive_construction[user_settings.builddir] = archive = DXXArchive(user_settings)
@@ -4499,7 +4663,10 @@ class DXXProgram(DXXCommon):
 		env = self.env
 		env.MergeFlags(archive.configure_added_environment_flags)
 		self.create_special_target_nodes(archive)
-		env.__dxx_CPPDEFINE_SHAREPATH = [('SHAREPATH', self._quote_cppdefine(self.user_settings.sharepath, f=str))]
+		sharepath = self.user_settings.sharepath
+		# Must use [] here, not (), since it is concatenated with other
+		# lists.
+		env.__dxx_CPPDEFINE_SHAREPATH = [('SHAREPATH', self._quote_cppdefine(sharepath, f=str))] if sharepath else []
 		env.Append(
 			CPPDEFINES = [
 				self.env_CPPDEFINES,
@@ -4691,14 +4858,28 @@ class D1XProgram(DXXProgram):
 	# general source files
 	def get_objects_common(self,
 		__get_dxx_objects_common=DXXProgram.get_objects_common, \
-		__get_dsx_objects_common=DXXCommon.create_lazy_object_getter([{
-		'source':[os.path.join(srcdir, f) for f in [
-'main/bmread.cpp',
-'main/custom.cpp',
-'main/snddecom.cpp',
-]
-],
-	}])
+		__get_dsx_objects_common=DXXCommon.create_lazy_object_getter(({
+		'source':(
+'d1x-rebirth/main/custom.cpp',
+'d1x-rebirth/main/snddecom.cpp',
+),
+	},
+	{
+		'source':(
+			# In Descent 1, bmread.cpp is used for both the regular
+			# build and the editor build.
+			#
+			# In Descent 2, bmread.cpp is only used for the editor
+			# build.
+			#
+			# Handle that inconsistency by defining it in the
+			# per-program lookup (D1XProgram, D2XProgram), not in the
+			# shared program lookup (DXXProgram).
+'similar/main/bmread.cpp',
+),
+		DXXCommon.key_transform_target:DXXProgram._apply_target_name,
+	},
+	))
 		):
 		value = __get_dxx_objects_common(self)
 		value.extend(__get_dsx_objects_common(self))
@@ -4707,12 +4888,12 @@ class D1XProgram(DXXProgram):
 	# for editor
 	def get_objects_editor(self,
 		__get_dxx_objects_editor=DXXProgram.get_objects_editor,
-		__get_dsx_objects_editor=DXXCommon.create_lazy_object_getter([{
-		'source':[os.path.join(srcdir, f) for f in [
-'editor/ehostage.cpp',
-]
-],
-	}])):
+		__get_dsx_objects_editor=DXXCommon.create_lazy_object_getter(({
+		'source':(
+'d1x-rebirth/editor/ehostage.cpp',
+),
+	},
+	))):
 		value = list(__get_dxx_objects_editor(self))
 		value.extend(__get_dsx_objects_editor(self))
 		return value
@@ -4727,20 +4908,20 @@ class D2XProgram(DXXProgram):
 	# general source files
 	def get_objects_common(self,
 		__get_dxx_objects_common=DXXProgram.get_objects_common, \
-		__get_dsx_objects_common=DXXCommon.create_lazy_object_getter([{
-		'source':[os.path.join(srcdir, f) for f in [
-'libmve/decoder8.cpp',
-'libmve/decoder16.cpp',
-'libmve/mve_audio.cpp',
-'libmve/mvelib.cpp',
-'libmve/mveplay.cpp',
-'main/escort.cpp',
-'main/gamepal.cpp',
-'main/movie.cpp',
-'misc/physfsrwops.cpp',
-]
-],
-	}])):
+		__get_dsx_objects_common=DXXCommon.create_lazy_object_getter(({
+		'source':(
+'d2x-rebirth/libmve/decoder8.cpp',
+'d2x-rebirth/libmve/decoder16.cpp',
+'d2x-rebirth/libmve/mve_audio.cpp',
+'d2x-rebirth/libmve/mvelib.cpp',
+'d2x-rebirth/libmve/mveplay.cpp',
+'d2x-rebirth/main/escort.cpp',
+'d2x-rebirth/main/gamepal.cpp',
+'d2x-rebirth/main/movie.cpp',
+'d2x-rebirth/misc/physfsrwops.cpp',
+),
+	},
+	))):
 		value = __get_dxx_objects_common(self)
 		value.extend(__get_dsx_objects_common(self))
 		return value
@@ -4748,12 +4929,16 @@ class D2XProgram(DXXProgram):
 	# for editor
 	def get_objects_editor(self,
 		__get_dxx_objects_editor=DXXProgram.get_objects_editor, \
-		__get_dsx_objects_editor=DXXCommon.create_lazy_object_getter([{
-		'source':[os.path.join(srcdir, f) for f in [
-'main/bmread.cpp',
-]
-],
-		}])):
+		__get_dsx_objects_editor=DXXCommon.create_lazy_object_getter(({
+		'source':(
+			# See comment by D1XProgram reference to bmread.cpp for why
+			# this is here instead of in the usual handling for similar
+			# files.
+'similar/main/bmread.cpp',
+),
+		DXXCommon.key_transform_target:DXXProgram._apply_target_name,
+		},
+		))):
 		value = list(__get_dxx_objects_editor(self))
 		value.extend(__get_dsx_objects_editor(self))
 		return value

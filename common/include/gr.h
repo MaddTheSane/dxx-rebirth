@@ -127,7 +127,6 @@ struct grs_font : public prohibit_void_ptr<grs_font>
 
 struct grs_canvas : prohibit_void_ptr<grs_canvas>
 {
-#ifndef NDEBUG
 	~grs_canvas()
 	{
 		/* `grd_curcanv` points to the currently active canvas.  If it
@@ -146,8 +145,13 @@ struct grs_canvas : prohibit_void_ptr<grs_canvas>
 		 * become obsolete.
 		 */
 		assert(this != grd_curcanv);
+		/* If the canvas is reset before next use, then no crash.
+		 * If the canvas is not reset, then crash instead of accessing
+		 * freed memory.
+		 */
+		if (grd_curcanv == this)
+			grd_curcanv = nullptr;
 	}
-#endif
 	grs_bitmap  cv_bitmap;      // the bitmap for this canvas
 	const grs_font *  cv_font;        // the currently selected font
 	short       cv_font_fg_color;   // current font foreground color (-1==Invisible)
@@ -251,11 +255,17 @@ public:
 		grs_bitmap(std::move(static_cast<grs_bitmap &>(r)))
 	{
 		r.bm_data = nullptr;
+#if DXX_USE_OGL
+		r.gltexture = nullptr;
+#endif
 	}
 	grs_main_bitmap &operator=(grs_main_bitmap &&r)
 	{
 		grs_bitmap::operator=(std::move(static_cast<grs_bitmap &>(r)));
 		bm_data = exchange(r.bm_data, nullptr);
+#if DXX_USE_OGL
+		gltexture = exchange(r.gltexture, nullptr);
+#endif
 		return *this;
 	}
 	~grs_main_bitmap()

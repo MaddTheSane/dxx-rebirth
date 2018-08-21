@@ -66,7 +66,6 @@
 #include "compiler-exchange.h"
 #include "compiler-range_for.h"
 #include "compiler-lengthof.h"
-#include "compiler-static_assert.h"
 #include "partial_range.h"
 
 #if defined(DXX_BUILD_DESCENT_I)
@@ -166,7 +165,7 @@ static int udp_tracker_process_game( ubyte *data, int data_len, const _sockaddr 
 static void udp_tracker_process_ack( ubyte *data, int data_len, const _sockaddr &sender_addr );
 static void udp_tracker_verify_ack_timeout();
 static void udp_tracker_request_holepunch( uint16_t TrackerGameID );
-static void udp_tracker_process_holepunch( ubyte *data, int data_len, const _sockaddr &sender_addr );
+static void udp_tracker_process_holepunch(uint8_t *data, unsigned data_len, const _sockaddr &sender_addr );
 #endif
 
 static fix64 StartAbortMenuTime;
@@ -833,11 +832,16 @@ struct direct_join
 #endif
 };
 
-struct manual_join : direct_join
+struct manual_join_user_inputs
 {
-	array<newmenu_item, 7> m;
 	array<char, 6> hostportbuf, myportbuf;
 	array<char, 128> addrbuf;
+};
+
+struct manual_join : direct_join, manual_join_user_inputs
+{
+	static manual_join_user_inputs s_last_inputs;
+	array<newmenu_item, 7> m;
 };
 
 struct list_join : direct_join
@@ -848,6 +852,8 @@ struct list_join : direct_join
 	array<newmenu_item, entries> m;
 	array<array<char, 74>, entries> ljtext;
 };
+
+manual_join_user_inputs manual_join::s_last_inputs;
 
 }
 
@@ -972,6 +978,7 @@ static int manual_join_game_handler(newmenu *const menu, const d_event &event, m
 			}
 			else
 			{
+				dj->s_last_inputs = *dj;
 				multi_new_game();
 				N_players = 0;
 				change_playernum_to(1);
@@ -1008,10 +1015,20 @@ void net_udp_manual_join_game()
 	auto dj = make_unique<manual_join>();
 	net_udp_init();
 
-	snprintf(&dj->addrbuf[0], dj->addrbuf.size(), "%s", CGameArg.MplUdpHostAddr.c_str());
-	snprintf(&dj->hostportbuf[0], dj->hostportbuf.size(), "%hu", CGameArg.MplUdpHostPort ? CGameArg.MplUdpHostPort : UDP_PORT_DEFAULT);
-
 	reset_UDP_MyPort();
+
+	if (dj->s_last_inputs.addrbuf[0])
+		dj->addrbuf = dj->s_last_inputs.addrbuf;
+	else
+		snprintf(&dj->addrbuf[0], dj->addrbuf.size(), "%s", CGameArg.MplUdpHostAddr.c_str());
+	if (dj->s_last_inputs.hostportbuf[0])
+		dj->hostportbuf = dj->s_last_inputs.hostportbuf;
+	else
+		snprintf(&dj->hostportbuf[0], dj->hostportbuf.size(), "%hu", CGameArg.MplUdpHostPort ? CGameArg.MplUdpHostPort : UDP_PORT_DEFAULT);
+	if (dj->s_last_inputs.myportbuf[0])
+		dj->myportbuf = dj->s_last_inputs.myportbuf;
+	else
+		snprintf(&dj->myportbuf[0], dj->myportbuf.size(), "%hu", UDP_MyPort);
 
 	nitems = 0;
 	auto &m = dj->m;
@@ -1020,7 +1037,6 @@ void net_udp_manual_join_game()
 	nm_set_item_text(m[nitems++],"GAME PORT:");
 	nm_set_item_input(m[nitems++], dj->hostportbuf);
 	nm_set_item_text(m[nitems++],"MY PORT:");
-	snprintf(&dj->myportbuf[0], dj->myportbuf.size(), "%hu", UDP_MyPort);
 	nm_set_item_input(m[nitems++], dj->myportbuf);
 	nm_set_item_text(m[nitems++],"");
 
@@ -1813,13 +1829,8 @@ namespace {
 
 class blown_bitmap_array
 {
-#if defined(DXX_BUILD_DESCENT_I)
-#define NUM_BLOWN_BITMAPS 7
-#elif defined(DXX_BUILD_DESCENT_II)
-#define NUM_BLOWN_BITMAPS 20
-#endif
 	typedef int T;
-	typedef array<T, NUM_BLOWN_BITMAPS> array_t;
+	using array_t = array<T, 32>;
 	typedef array_t::const_iterator const_iterator;
 	array_t a;
 	array_t::iterator e;
@@ -1838,7 +1849,10 @@ public:
 		if (exists(t))
 			return;
 		if (e == a.end())
-			throw std::length_error("too many blown bitmaps");
+		{
+			LevelError("too many blown bitmaps; ignoring bitmap %i.", t);
+			return;
+		}
 		*e = t;
 		++e;
 	}
@@ -1846,41 +1860,45 @@ public:
 
 }
 
-static int net_udp_create_monitor_vector(void)
+static unsigned net_udp_create_monitor_vector(void)
 {
-	int monitor_num = 0;
-	int vector = 0;
 	blown_bitmap_array blown_bitmaps;
+	constexpr size_t max_textures = Textures.size();
 	range_for (auto &i, partial_const_range(Effects, Num_effects))
 	{
-		if (i.dest_bm_num < Textures.size())
+		if (i.dest_bm_num < max_textures)
 		{
 			blown_bitmaps.insert_unique(i.dest_bm_num);
 		}
 	}
-		
-	range_for (const auto &&seg, vcsegptr)
+	unsigned monitor_num = 0;
+	unsigned vector = 0;
+	range_for (const auto &&seg, vcsegptridx)
 	{
-		int tm, ec;
 		range_for (auto &j, seg->sides)
 		{
-			if ((tm = j.tmap_num2) != 0)
+			const unsigned tm2 = j.tmap_num2;
+			if (!tm2)
+				continue;
+			const unsigned masked_tm2 = tm2 & 0x3fff;
+			const unsigned ec = TmapInfo[masked_tm2].eclip_num;
 			{
-				if ((ec = TmapInfo[tm & 0x3fff].eclip_num) != eclip_none &&
+				if (ec != eclip_none &&
 					Effects[ec].dest_bm_num != ~0u)
 				{
-					monitor_num++;
-					Assert(monitor_num < 32);
+				}
+				else if (blown_bitmaps.exists(masked_tm2))
+				{
+					if (monitor_num >= 8 * sizeof(vector))
+					{
+						LevelError("too many blown monitors; ignoring segment %hu.", seg.get_unchecked_index());
+						return vector;
+					}
+							vector |= (1 << monitor_num);
 				}
 				else
-				{
-					if (blown_bitmaps.exists(tm&0x3fff))
-					{
-							vector |= (1 << monitor_num);
-							monitor_num++;
-							Assert(monitor_num < 32);
-					}
-				}
+					continue;
+				monitor_num++;
 			}
 		}
 	}
@@ -2769,7 +2787,8 @@ static void net_udp_process_game_info(const uint8_t *data, uint_fast32_t, const 
 		Netgame.levelnum = GET_INTEL_INT(&(data[len]));					len += 4;
 		Netgame.gamemode = data[len];							len++;
 		Netgame.RefusePlayers = data[len];						len++;
-		Netgame.difficulty = data[len];							len++;
+		Netgame.difficulty = cast_clamp_difficulty(data[len]);
+		len++;
 		Netgame.game_status = data[len];						len++;
 		Netgame.numplayers = data[len];							len++;
 		Netgame.max_numplayers = data[len];						len++;
@@ -3241,7 +3260,9 @@ static int net_udp_start_poll(newmenu *, const d_event &event, start_poll_menu_i
 #if DXX_USE_TRACKER
 #define DXX_UDP_MENU_TRACKER_OPTION(VERB)	\
 	DXX_MENUITEM(VERB, CHECK, "Track this game on", opt_tracker, Netgame.Tracker) \
-	DXX_MENUITEM(VERB, TEXT, tracker_addr_txt, opt_tracker_addr)
+	DXX_MENUITEM(VERB, TEXT, tracker_addr_txt, opt_tracker_addr)	\
+	DXX_MENUITEM(VERB, CHECK, "Enable tracker NAT hole punch", opt_tracker_nathp, TrackerNATWarned)	\
+
 #else
 #define DXX_UDP_MENU_TRACKER_OPTION(VERB)
 #endif
@@ -3277,7 +3298,7 @@ constexpr std::integral_constant<unsigned, 5 * reactor_invul_time_mini_scale> re
 
 #define DXX_UDP_MENU_OPTIONS(VERB)	                                    \
 	DXX_MENUITEM(VERB, TEXT, "Game Options", game_label)	                     \
-	DXX_MENUITEM(VERB, SLIDER, get_annotated_difficulty_string(), opt_difficulty, Netgame.difficulty, 0, (NDL-1))	\
+	DXX_MENUITEM(VERB, SLIDER, get_annotated_difficulty_string(Netgame.difficulty), opt_difficulty, difficulty, Difficulty_0, Difficulty_4)	\
 	DXX_MENUITEM(VERB, SCALE_SLIDER, srinvul, opt_cinvul, Netgame.control_invul_time, 0, 10, reactor_invul_time_scale)	\
 	DXX_MENUITEM(VERB, SLIDER, PlayText, opt_playtime, Netgame.PlayTimeAllowed, 0, 10)	\
 	DXX_MENUITEM(VERB, SLIDER, KillText, opt_killgoal, Netgame.KillGoal, 0, 20)	\
@@ -3373,7 +3394,7 @@ class more_game_options_menu_items
 #endif
 	typedef array<newmenu_item, DXX_UDP_MENU_OPTIONS(COUNT)> menu_array;
 	menu_array m;
-	static const char *get_annotated_difficulty_string()
+	static const char *get_annotated_difficulty_string(const Difficulty_level_type d)
 	{
 		static const array<char[20], 5> text{{
 			"Difficulty: Trainee",
@@ -3382,13 +3403,13 @@ class more_game_options_menu_items
 			"Difficulty: Ace",
 			"Difficulty: Insane"
 		}};
-		switch (const auto d = Netgame.difficulty)
+		switch (d)
 		{
-			case 0:
-			case 1:
-			case 2:
-			case 3:
-			case 4:
+			case Difficulty_0:
+			case Difficulty_1:
+			case Difficulty_2:
+			case Difficulty_3:
+			case Difficulty_4:
 				return text[d];
 			default:
 				return &text[3][16];
@@ -3400,12 +3421,12 @@ public:
 	{
 		return m;
 	}
-	void update_difficulty_string()
+	void update_difficulty_string(const Difficulty_level_type difficulty)
 	{
 		/* Cast away const because newmenu_item uses `char *text` even
 		 * for fields where text is treated as `const char *`.
 		 */
-		m[opt_difficulty].text = const_cast<char *>(get_annotated_difficulty_string());
+		m[opt_difficulty].text = const_cast<char *>(get_annotated_difficulty_string(difficulty));
 	}
 	void update_extra_primary_string(unsigned primary)
 	{
@@ -3455,7 +3476,8 @@ public:
 	};
 	more_game_options_menu_items()
 	{
-		update_difficulty_string();
+		const auto difficulty = Netgame.difficulty;
+		update_difficulty_string(difficulty);
 		update_packstring();
 		update_portstring();
 		update_reactor_life_string(Netgame.control_invul_time / reactor_invul_time_mini_scale);
@@ -3473,6 +3495,9 @@ public:
 #endif
 		update_extra_primary_string(primary);
 		update_extra_secondary_string(secondary);
+#if DXX_USE_TRACKER
+		const unsigned TrackerNATWarned = Netgame.TrackerNATWarned == TrackerNATHolePunchWarn::UserEnabledHP;
+#endif
 		DXX_UDP_MENU_OPTIONS(ADD);
 #if DXX_USE_TRACKER
 		const auto &tracker_addr = CGameArg.MplTrackerAddr;
@@ -3495,7 +3520,12 @@ public:
 		uint8_t thief_absent;
 		uint8_t thief_cannot_steal_energy_weapons;
 #endif
+		uint8_t difficulty;
+#if DXX_USE_TRACKER
+		unsigned TrackerNATWarned;
+#endif
 		DXX_UDP_MENU_OPTIONS(READ);
+		Netgame.difficulty = cast_clamp_difficulty(difficulty);
 		auto &items = Netgame.DuplicatePowerups;
 		items.set_primary_count(primary);
 		items.set_secondary_count(secondary);
@@ -3509,6 +3539,9 @@ public:
 		auto pps = strtol(packstring, &p, 10);
 		if (!*p)
 			Netgame.PacketsPerSec = pps;
+#if DXX_USE_TRACKER
+		Netgame.TrackerNATWarned = TrackerNATWarned ? TrackerNATHolePunchWarn::UserEnabledHP : TrackerNATHolePunchWarn::UserRejectedHP;
+#endif
 		convert_text_portstring(portstring, UDP_MyPort, false, false);
 	}
 	static void net_udp_more_game_options();
@@ -3591,8 +3624,8 @@ int more_game_options_menu_items::handler(newmenu *, const d_event &event, more_
 			auto &menus = items->get_menu_items();
 			if (citem == opt_difficulty)
 			{
-				Netgame.difficulty = menus[opt_difficulty].value;
-				items->update_difficulty_string();
+				Netgame.difficulty = cast_clamp_difficulty(menus[opt_difficulty].value);
+				items->update_difficulty_string(Netgame.difficulty);
 			}
 			else if (citem == opt_cinvul)
 				items->update_reactor_life_string(menus[opt_cinvul].value * (reactor_invul_time_scale / reactor_invul_time_mini_scale));
@@ -3956,6 +3989,23 @@ window_event_result net_udp_setup_game()
 	nm_set_item_menu(  m[optnum], "Advanced Options"); optnum++;
 
 	Assert(optnum <= 20);
+
+#if DXX_USE_TRACKER
+	if (Netgame.TrackerNATWarned == TrackerNATHolePunchWarn::Unset)
+	{
+		const unsigned choice = nm_messagebox_str("NAT Hole Punch", nm_messagebox_tie("Yes, let Internet users join", "No, I will configure my router"),
+"Rebirth now supports automatic\n"
+"NAT hole punch through the\n"
+"tracker.\n\n"
+"This allows Internet users to\n"
+"join your game, even if you do\n"
+"not configure your router for\n"
+"hosting.\n\n"
+"Do you want to use this feature?");
+		if (choice <= 1)
+			Netgame.TrackerNATWarned = static_cast<TrackerNATHolePunchWarn>(choice + 1);
+	}
+#endif
 
 	int i;
 	i = newmenu_do1(nullptr, TXT_NETGAME_SETUP, optnum, m.data(), net_udp_game_param_handler, &opt, opt.start_game);
@@ -4595,9 +4645,9 @@ int net_udp_do_join_game()
 	}
 
 	// Check for valid mission name
-	if (!load_mission_by_name(Netgame.mission_name))
+	if (const auto errstr = load_mission_by_name(Netgame.mission_name))
 	{
-		nm_messagebox(NULL, 1, TXT_OK, TXT_MISSION_NOT_FOUND);
+		nm_messagebox(nullptr, 1, TXT_OK, "%s\n\n%s", TXT_MISSION_NOT_FOUND, errstr);
 		return 0;
 	}
 
@@ -5995,7 +6045,10 @@ static void udp_tracker_verify_ack_timeout()
 		con_puts(CON_URGENT, "[Tracker] No response from game tracker. Tracker address may be invalid or Tracker may be offline or otherwise unreachable.");
 	}
 	else if (TrackerAckStatus == TrackerAckState::TACK_INTERNAL)
-		con_puts(CON_NORMAL, "[Tracker] No external signal from game tracker. Your game port does not seem to be reachable. Clients will attempt hole-punching to join your game.");
+	{
+		con_puts(CON_NORMAL, "[Tracker] No external signal from game tracker.  Your game port does not seem to be reachable.");
+		con_puts(CON_NORMAL, Netgame.TrackerNATWarned == TrackerNATHolePunchWarn::UserEnabledHP ? "Clients will attempt hole-punching to join your game." : "Clients will only be able to join your game if specifically configured in your router.");
+	}
 	TrackerAckStatus = TrackerAckState::TACK_SEQCOMPL;
 }
 
@@ -6013,7 +6066,7 @@ static void udp_tracker_request_holepunch( uint16_t TrackerGameID )
 
 /* Tracker sent us an address from a client requesting hole punching.
  * We'll simply reply with another hole punch packet and wait for them to request our game info properly. */
-static void udp_tracker_process_holepunch( ubyte *data, int data_len, const _sockaddr &sender_addr )
+static void udp_tracker_process_holepunch(uint8_t *const data, const unsigned data_len, const _sockaddr &sender_addr )
 {
 	if (data_len == 1 && !multi_i_am_master())
 	{
@@ -6022,22 +6075,29 @@ static void udp_tracker_process_holepunch( ubyte *data, int data_len, const _soc
 	}
 	if (!Netgame.Tracker || !sender_is_tracker(sender_addr, TrackerSocket) || !multi_i_am_master())
 		return;
-
-	char *p0, delimiter[] = "/";
-	char sIP[46] = {};
-	array<char, 6> sPort{};
-	uint16_t iPort = 0;
-
-	p0 = strtok(reinterpret_cast<char *>(data), delimiter);
-	if (p0 == NULL)
+	if (Netgame.TrackerNATWarned != TrackerNATHolePunchWarn::UserEnabledHP)
+	{
+		con_puts(CON_NORMAL, "Ignoring tracker hole-punch request because user disabled hole punch.");
 		return;
-	p0++;
-	memcpy(sIP, p0, strlen(p0));
-	p0 = strtok(NULL, delimiter);
-	if (p0 == NULL)
+	}
+	if (!data_len || data[data_len - 1])
 		return;
-	memcpy(&sPort, p0, strlen(p0));
-	if (!convert_text_portstring(sPort, iPort, true, true))
+
+	auto &delimiter = "/";
+
+	const auto p0 = strtok(reinterpret_cast<char *>(data), delimiter);
+	if (!p0)
+		return;
+	const auto sIP = p0 + 1;
+	const auto pPort = strtok(NULL, delimiter);
+	if (!pPort)
+		return;
+	char *porterror;
+	const auto myport = strtoul(pPort, &porterror, 10);
+	if (*porterror)
+		return;
+	const uint16_t iPort = myport;
+	if (iPort != myport)
 		return;
 
 	// Get the DNS stuff

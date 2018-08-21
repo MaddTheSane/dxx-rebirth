@@ -1102,28 +1102,7 @@ int state_save_all_sub(const char *filename, const char *desc)
 
 #if defined(DXX_BUILD_DESCENT_II)
 //Save exploding wall info
-	{
-		const int i = expl_wall_list.size();
-	PHYSFS_write(fp, &i, sizeof(int), 1);
-	}
-	{
-		const disk_expl_wall None{-1, 0, 0};
-	range_for (auto &e, expl_wall_list)
-	{
-		disk_expl_wall d;
-		const disk_expl_wall *i;
-		if (e.segnum == segment_none)
-			i = &None;
-		else
-		{
-			i = &d;
-		d.segnum = e.segnum;
-		d.sidenum = e.sidenum;
-		d.time = e.time;
-		}
-		PHYSFS_write(fp, i, sizeof(d), 1);
-	}
-	}
+	expl_wall_write(Walls.vmptr, fp);
 #endif
 
 //Save door info
@@ -1156,7 +1135,7 @@ int state_save_all_sub(const char *filename, const char *desc)
 	range_for (const auto &&segp, vcsegptr)
 	{
 		range_for (const auto &j, segp->sides)
-			segment_side_wall_tmap_write(fp, j);
+			segment_side_wall_tmap_write(fp, j, j);
 	}
 
 // Save the fuelcen info
@@ -1483,9 +1462,9 @@ int state_restore_all_sub(const char *filename, const secret_restore secret)
 // Read the mission info...
 	PHYSFS_read(fp, mission, sizeof(char) * 9, 1);
 
-	if (!load_mission_by_name(mission))
+	if (const auto errstr = load_mission_by_name(mission))
 	{
-		nm_messagebox( NULL, 1, "Ok", "Error!\nUnable to load mission\n'%s'\n", mission );
+		nm_messagebox(nullptr, 1, TXT_OK, "Error!\nUnable to load mission\n'%s'\n\n%s", mission, errstr);
 		return 0;
 	}
 
@@ -1598,7 +1577,10 @@ int state_restore_all_sub(const char *filename, const secret_restore secret)
 	select_secondary_weapon(pl_info, nullptr, Secondary_weapon, 0);
 
 // Restore the difficulty level
-	Difficulty_level = PHYSFSX_readSXE32(fp, swap);
+	{
+		const unsigned u = PHYSFSX_readSXE32(fp, swap);
+		Difficulty_level = cast_clamp_difficulty(u);
+	}
 
 // Restore the cheats enabled flag
 	game_disable_cheats(); // disable cheats first
@@ -1686,6 +1668,7 @@ int state_restore_all_sub(const char *filename, const secret_restore secret)
 	}
 
 	//Restore wall info
+	init_exploding_walls();
 	Walls.set_count(PHYSFSX_readSXE32(fp, swap));
 	range_for (const auto &&w, vmwallptr)
 		wall_read(fp, *w);
@@ -1703,7 +1686,7 @@ int state_restore_all_sub(const char *filename, const secret_restore secret)
 	//Restore exploding wall info
 	if (version >= 10) {
 		unsigned i = PHYSFSX_readSXE32(fp, swap);
-		expl_wall_read_n_swap(fp, swap, partial_range(expl_wall_list, i));
+		expl_wall_read_n_swap(Walls.vmptr, fp, swap, i);
 	}
 #endif
 

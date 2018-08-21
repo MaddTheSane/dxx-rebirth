@@ -222,7 +222,7 @@ static inline int is_alphablend_eclip(int eclip_num)
 //	they are used for our hideously hacked in headlight system.
 //	vp is a pointer to vertex ids.
 //	tmap1, tmap2 are texture map ids.  tmap2 is the pasty one.
-static void render_face(grs_canvas &canvas, const segment &segp, const unsigned sidenum, const unsigned nv, const array<unsigned, 4> &vp, const unsigned tmap1, const unsigned tmap2, array<g3s_uvl, 4> uvl_copy, const WALL_IS_DOORWAY_result_t wid_flags)
+static void render_face(grs_canvas &canvas, const shared_segment &segp, const unsigned sidenum, const unsigned nv, const array<unsigned, 4> &vp, const unsigned tmap1, const unsigned tmap2, array<g3s_uvl, 4> uvl_copy, const WALL_IS_DOORWAY_result_t wid_flags)
 {
 	grs_bitmap  *bm;
 
@@ -545,7 +545,7 @@ im_so_ashamed: ;
 				}
 
 			} else
-				throw side::illegal_type(segp, sidep);
+				throw side::illegal_type(segp, *sidep);
 		}
 	}
 
@@ -765,7 +765,7 @@ static void render_segment(grs_canvas &canvas, const vcsegptridx_t seg)
 		}
 
 		for (sn=0; sn<MAX_SIDES_PER_SEGMENT; sn++)
-			render_side(vcvertptr, canvas, seg, sn, WALL_IS_DOORWAY(seg, sn), Viewer_eye);
+			render_side(vcvertptr, canvas, seg, sn, WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, seg, seg, sn), Viewer_eye);
 	}
 
 	//draw any objects that happen to be in this segment
@@ -783,9 +783,10 @@ constexpr fix CROSS_WIDTH = i2f(8);
 constexpr fix CROSS_HEIGHT = i2f(8);
 
 //draw outline for curside
-static void outline_seg_side(grs_canvas &canvas, const vcsegptr_t seg,int _side,int edge,int vert)
+static void outline_seg_side(grs_canvas &canvas, const shared_segment &seg, const unsigned _side, const unsigned edge, const unsigned vert)
 {
-	if (!rotate_list(seg->verts).uand)
+	auto &verts = seg.verts;
+	if (!rotate_list(verts).uand)
 	{		//all off screen?
 		g3s_point *pnt;
 
@@ -793,11 +794,11 @@ static void outline_seg_side(grs_canvas &canvas, const vcsegptr_t seg,int _side,
 
 		const uint8_t color = BM_XRGB(0, 63, 0);
 		auto &sv = Side_to_verts[_side];
-		g3_draw_line(canvas, Segment_points[seg->verts[sv[edge]]], Segment_points[seg->verts[sv[(edge + 1)%4]]], color);
+		g3_draw_line(canvas, Segment_points[verts[sv[edge]]], Segment_points[verts[sv[(edge + 1)%4]]], color);
 
 		//draw a little cross at the current vert
 
-		pnt = &Segment_points[seg->verts[Side_to_verts[_side][vert]]];
+		pnt = &Segment_points[verts[Side_to_verts[_side][vert]]];
 
 		g3_project_point(*pnt);		//make sure projected
 
@@ -1018,12 +1019,12 @@ public:
 	{
 		range_for (const auto t, segstate.objects)
 		{
-			const auto &&objp = vmobjptr(t.objnum);
+			auto &objp = *vmobjptr(t.objnum);
 			auto &e = (*this)[t.objnum];
 #if defined(DXX_BUILD_DESCENT_II)
-			e.objp = objp;
+			e.objp = &objp;
 #endif
-			e.dist_squared = vm_vec_dist2(objp->pos, Viewer_eye);
+			e.dist_squared = vm_vec_dist2(objp.pos, Viewer_eye);
 		}
 	}
 	bool operator()(const distant_object &a, const distant_object &b) const;
@@ -1127,7 +1128,8 @@ static void build_object_lists(render_state_t &rstate)
 								const auto &&seg = vcsegptr(new_segnum);
 #endif
 		
-								if (WALL_IS_DOORWAY(seg,sn) & WID_FLY_FLAG) {		//can explosion migrate through
+								if (WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, seg, seg, sn) & WID_FLY_FLAG)
+								{		//can explosion migrate through
 									int child = seg->children[sn];
 									int checknp;
 		
@@ -1292,7 +1294,7 @@ static void build_segment_list(render_state_t &rstate, visited_twobit_array_t &v
 			sort_child_array_t child_list;		//list of ordered sides to process
 			uint_fast32_t n_children = 0;							//how many sides in child_list
 			for (uint_fast32_t c = 0;c < MAX_SIDES_PER_SEGMENT;c++) {		//build list of sides
-				auto wid = WALL_IS_DOORWAY(seg, c);
+				const auto wid = WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, seg, seg, c);
 				if (wid & WID_RENDPAST_FLAG)
 				{
 					if (auto codes_and = uor)
@@ -1566,7 +1568,7 @@ void render_mine(grs_canvas &canvas, const vcsegidx_t start_seg_num, const fix e
 
 					for (sn=0; sn<MAX_SIDES_PER_SEGMENT; sn++)
 					{
-						const auto wid = WALL_IS_DOORWAY(seg, sn);
+						const auto wid = WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, seg, seg, sn);
 						if (wid == WID_TRANSPARENT_WALL || wid == WID_TRANSILLUSORY_WALL
 #if defined(DXX_BUILD_DESCENT_II)
 							|| (wid & WID_CLOAKED_FLAG)
@@ -1616,7 +1618,7 @@ void render_mine(grs_canvas &canvas, const vcsegidx_t start_seg_num, const fix e
 
 					for (sn=0; sn<MAX_SIDES_PER_SEGMENT; sn++)
 					{
-						const auto wid = WALL_IS_DOORWAY(seg, sn);
+						const auto wid = WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, seg, seg, sn);
 						if (wid == WID_TRANSPARENT_WALL || wid == WID_TRANSILLUSORY_WALL
 #if defined(DXX_BUILD_DESCENT_II)
 							|| (wid & WID_CLOAKED_FLAG)

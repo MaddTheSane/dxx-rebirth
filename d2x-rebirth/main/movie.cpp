@@ -161,7 +161,7 @@ int PlayMovie(const char *subtitles, const char *filename, int must_have)
 	strcpy(name,filename);
 
 	if ((p=strchr(name,'.')) == NULL)		//add extension, if missing
-		strcat(name,".mve");
+		strcat(name,".MVE");
 
 	// Stop all digital sounds currently playing.
 	digi_stop_digi_sounds();
@@ -300,14 +300,14 @@ static window_event_result show_pause_message(window *, const d_event &event, co
 
 			gr_set_default_canvas();
 			auto &canvas = *grd_curcanv;
-			gr_set_curfont(canvas, GAME_FONT);
-			gr_get_string_size(*canvas.cv_font, msg, nullptr, &h, nullptr);
+			const auto &game_font = *GAME_FONT;
+			gr_get_string_size(game_font, msg, nullptr, &h, nullptr);
 
 			y = (grd_curscreen->get_screen_height() - h) / 2;
 
 			gr_set_fontcolor(canvas, 255, -1);
 
-			gr_ustring(canvas, 0x8000, y, msg);
+			gr_ustring(canvas, game_font, 0x8000, y, msg);
 			break;
 		}
 
@@ -657,7 +657,7 @@ static void draw_subtitles(int frame_num)
 	}
 
 	//find y coordinate for first line of subtitles
-	const auto &&line_spacing = LINE_SPACING(*grd_curcanv);
+	const auto &&line_spacing = LINE_SPACING(*grd_curcanv->cv_font, *GAME_FONT);
 	y = grd_curcanv->cv_bitmap.bm_h - (line_spacing * (MAX_ACTIVE_SUBTITLES + 2));
 
 	//erase old subtitles if necessary
@@ -669,7 +669,7 @@ static void draw_subtitles(int frame_num)
 	range_for (const auto &t, partial_range(active_subtitles, num_active_subtitles))
 		if (t != -1)
 		{
-			gr_string(*grd_curcanv, 0x8000, y, Subtitles[t].msg);
+			gr_string(*grd_curcanv, *grd_curcanv->cv_font, 0x8000, y, Subtitles[t].msg);
 			y += line_spacing;
 		}
 }

@@ -1119,7 +1119,8 @@ static void ai_fire_laser_at_player(segment_array &segments, const vmobjptridx_t
 		{
 			//	They are connected via conn_side in segment obj->segnum.
 			//	See if they are unobstructed.
-			if (!(WALL_IS_DOORWAY(csegp, conn_side) & WID_FLY_FLAG)) {
+			if (!(WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, csegp, csegp, conn_side) & WID_FLY_FLAG))
+			{
 				//	Can't fly through, so don't let this bot fire through!
 				return;
 			}
@@ -1570,7 +1571,7 @@ void do_ai_robot_hit(const vmobjptridx_t objp, player_awareness_type_t type)
 					//	1/8 time, charge player, 1/4 time create path, rest of time, do nothing
 					ai_local		*ailp = &objp->ctype.ai_info.ail;
 					if (r < 4096) {
-						create_path_to_player(objp, 10, 1);
+						create_path_to_player(objp, 10, create_path_safety_flag::safe);
 						objp->ctype.ai_info.behavior = ai_behavior::AIB_STATION;
 						objp->ctype.ai_info.hide_segment = objp->segnum;
 						ailp->mode = ai_mode::AIM_CHASE_OBJECT;
@@ -1695,17 +1696,17 @@ static void compute_vis_and_vec(fvmsegptridx &vmsegptridx, const vmobjptridx_t o
 // --------------------------------------------------------------------------------------------------------------------
 //	Move object one object radii from current position towards segment center.
 //	If segment center is nearer than 2 radii, move it to center.
-void move_towards_segment_center(const vmobjptr_t objp)
+void move_towards_segment_center(object_base &objp)
 {
 /* ZICO's change of 20081103:
    Make move to segment center smoother by using move_towards vector.
    Bot's should not jump around and maybe even intersect with each other!
    In case it breaks something what I do not see, yet, old code is still there. */
-	auto segnum = objp->segnum;
+	const auto segnum = objp.segnum;
 	vms_vector	vec_to_center;
 
 	const auto &&segment_center = compute_segment_center(vcvertptr, vcsegptr(segnum));
-	vm_vec_normalized_dir_quick(vec_to_center, segment_center, objp->pos);
+	vm_vec_normalized_dir_quick(vec_to_center, segment_center, objp.pos);
 	move_towards_vector(objp, vec_to_center, 1);
 }
 
@@ -1718,20 +1719,20 @@ int ai_door_is_openable(
 #if defined(DXX_BUILD_DESCENT_II)
 	const player_flags powerup_flags,
 #endif
-	const vcsegptr_t segp, const int sidenum)
+	const shared_segment &segp, const unsigned sidenum)
 {
-	if (!IS_CHILD(segp->children[sidenum]))
+	if (!IS_CHILD(segp.children[sidenum]))
 		return 0;		//trap -2 (exit side)
 
-	auto wall_num = segp->sides[sidenum].wall_num;
+	const auto wall_num = segp.sides[sidenum].wall_num;
 
 	if (wall_num == wall_none)		//if there's no door at all...
 		return 0;				//..then say it can't be opened
 
-	const auto &&wallp = vcwallptr(wall_num);
+	auto &wall = *vcwallptr(wall_num);
 	//	The mighty console object can open all doors (for purposes of determining paths).
 	if (objp == ConsoleObject) {
-		const auto wt = wallp->type;
+		const auto wt = wall.type;
 		if (wt == WALL_DOOR)
 		{
 			static_assert(WALL_DOOR != 0, "WALL_DOOR must be nonzero for this shortcut to work properly.");
@@ -1745,8 +1746,8 @@ int ai_door_is_openable(
 
 		if (wall_num != wall_none)
 		{
-			const auto wt = wallp->type;
-			if (wt == WALL_DOOR && wallp->keys == KEY_NONE && !(wallp->flags & WALL_DOOR_LOCKED))
+			const auto wt = wall.type;
+			if (wt == WALL_DOOR && wall.keys == KEY_NONE && !(wall.flags & WALL_DOOR_LOCKED))
 			{
 				static_assert(WALL_DOOR != 0, "WALL_DOOR must be nonzero for this shortcut to work properly.");
 				return wt;
@@ -1756,16 +1757,16 @@ int ai_door_is_openable(
 #elif defined(DXX_BUILD_DESCENT_II)
 	if (Robot_info[get_robot_id(objp)].companion)
 	{
-		const auto wt = wallp->type;
-		if (wallp->flags & WALL_BUDDY_PROOF) {
-			if (wt == WALL_DOOR && wallp->state == WALL_DOOR_CLOSED)
+		const auto wt = wall.type;
+		if (wall.flags & WALL_BUDDY_PROOF) {
+			if (wt == WALL_DOOR && wall.state == WALL_DOOR_CLOSED)
 				return 0;
 			else if (wt == WALL_CLOSED)
 				return 0;
-			else if (wt == WALL_ILLUSION && !(wallp->flags & WALL_ILLUSION_OFF))
+			else if (wt == WALL_ILLUSION && !(wall.flags & WALL_ILLUSION_OFF))
 				return 0;
 		}
-		switch (const auto wall_keys = wallp->keys)
+		switch (const auto wall_keys = wall.keys)
 		{
 				case KEY_BLUE:
 				case KEY_GOLD:
@@ -1787,51 +1788,51 @@ int ai_door_is_openable(
 
 		// -- if (Buddy_got_stuck) {
 		if (ailp_mode == ai_mode::AIM_GOTO_PLAYER) {
-			if (wt == WALL_BLASTABLE && wallp->state != WALL_BLASTED)
+			if (wt == WALL_BLASTABLE && wall.state != WALL_BLASTED)
 				return 0;
 			if (wt == WALL_CLOSED)
 				return 0;
 			if (wt == WALL_DOOR) {
-				if ((wallp->flags & WALL_DOOR_LOCKED) && (wallp->state == WALL_DOOR_CLOSED))
+				if ((wall.flags & WALL_DOOR_LOCKED) && (wall.state == WALL_DOOR_CLOSED))
 					return 0;
 			}
 		}
 		// -- }
 
-		if ((ailp_mode != ai_mode::AIM_GOTO_PLAYER) && (wallp->controlling_trigger != -1)) {
-			const auto clip_num = wallp->clip_num;
+		if ((ailp_mode != ai_mode::AIM_GOTO_PLAYER) && (wall.controlling_trigger != -1)) {
+			const auto clip_num = wall.clip_num;
 			if (clip_num == -1)
 				return clip_num;
 			else if (WallAnims[clip_num].flags & WCF_HIDDEN) {
 				static_assert(WALL_DOOR_CLOSED == 0, "WALL_DOOR_CLOSED must be zero for this shortcut to work properly.");
-				return wallp->state;
+				return wall.state;
 			} else
 				return 1;
 		}
 
 		if (wt == WALL_DOOR)  {
-				const auto clip_num = wallp->clip_num;
+				const auto clip_num = wall.clip_num;
 
 				if (clip_num == -1)
 					return clip_num;
 				//	Buddy allowed to go through secret doors to get to player.
 				else if ((ailp_mode != ai_mode::AIM_GOTO_PLAYER) && (WallAnims[clip_num].flags & WCF_HIDDEN)) {
 					static_assert(WALL_DOOR_CLOSED == 0, "WALL_DOOR_CLOSED must be zero for this shortcut to work properly.");
-					return wallp->state;
+					return wall.state;
 				} else
 					return 1;
 		}
 	} else if ((get_robot_id(objp) == ROBOT_BRAIN) || (objp->ctype.ai_info.behavior == ai_behavior::AIB_RUN_FROM) || (objp->ctype.ai_info.behavior == ai_behavior::AIB_SNIPE)) {
 		if (wall_num != wall_none)
 		{
-			const auto wt = wallp->type;
-			if (wt == WALL_DOOR && (wallp->keys == KEY_NONE) && !(wallp->flags & WALL_DOOR_LOCKED))
+			const auto wt = wall.type;
+			if (wt == WALL_DOOR && (wall.keys == KEY_NONE) && !(wall.flags & WALL_DOOR_LOCKED))
 			{
 				static_assert(WALL_DOOR != 0, "WALL_DOOR must be nonzero for this shortcut to work properly.");
 				return wt;
 			}
-			else if (wallp->keys != KEY_NONE) {	//	Allow bots to open doors to which player has keys.
-				return powerup_flags & static_cast<PLAYER_FLAG>(wallp->keys);
+			else if (wall.keys != KEY_NONE) {	//	Allow bots to open doors to which player has keys.
+				return powerup_flags & static_cast<PLAYER_FLAG>(wall.keys);
 			}
 		}
 	}
@@ -1841,12 +1842,13 @@ int ai_door_is_openable(
 
 //	-----------------------------------------------------------------------------------------------------------
 //	Return side of openable door in segment, if any.  If none, return side_none.
-static unsigned openable_doors_in_segment(fvcwallptr &vcwallptr, const segment &segp)
+static unsigned openable_doors_in_segment(fvcwallptr &vcwallptr, const shared_segment &segp)
 {
 	int	i;
 	for (i=0; i<MAX_SIDES_PER_SEGMENT; i++) {
-		if (segp.sides[i].wall_num != wall_none) {
-			const auto wall_num = segp.sides[i].wall_num;
+		const auto wall_num = segp.sides[i].wall_num;
+		if (wall_num != wall_none)
+		{
 			auto &w = *vcwallptr(wall_num);
 #if defined(DXX_BUILD_DESCENT_I)
 			if (w.type == WALL_DOOR && w.keys == KEY_NONE && w.state == WALL_DOOR_CLOSED && !(w.flags & WALL_DOOR_LOCKED))
@@ -1861,10 +1863,10 @@ static unsigned openable_doors_in_segment(fvcwallptr &vcwallptr, const segment &
 
 // --------------------------------------------------------------------------------------------------------------------
 //	Return true if placing an object of size size at pos *pos intersects a (player or robot or control center) in segment *segp.
-static int check_object_object_intersection(const vms_vector &pos, fix size, const vcsegptr_t segp)
+static int check_object_object_intersection(const vms_vector &pos, fix size, const unique_segment &segp)
 {
 	//	If this would intersect with another object (only check those in this segment), then try to move.
-	range_for (const auto curobjp, objects_in(*segp, vcobjptridx, vcsegptr))
+	range_for (const auto curobjp, objects_in(segp, vcobjptridx, vcsegptr))
 	{
 		if ((curobjp->type == OBJ_PLAYER) || (curobjp->type == OBJ_ROBOT) || (curobjp->type == OBJ_CNTRLCEN)) {
 			if (vm_vec_dist_quick(pos, curobjp->pos) < size + curobjp->size)
@@ -1890,8 +1892,9 @@ static imobjptridx_t create_gated_robot(fvcobjptr &vcobjptr, const vmsegptridx_t
 	unsigned count = 0;
 	range_for (const auto &&objp, vcobjptr)
 	{
-		if (objp->type == OBJ_ROBOT)
-			if (objp->matcen_creator == BOSS_GATE_MATCEN_NUM)
+		auto &obj = *objp;
+		if (obj.type == OBJ_ROBOT)
+			if (obj.matcen_creator == BOSS_GATE_MATCEN_NUM)
 				count++;
 	}
 
@@ -2013,8 +2016,6 @@ void create_buddy_bot(void)
 }
 #endif
 
-#define	QUEUE_SIZE	256
-
 // --------------------------------------------------------------------------------------------------------------------
 //	Create list of segments boss is allowed to teleport to at imsegptr.
 //	Set *num_segs.
@@ -2024,6 +2025,7 @@ void create_buddy_bot(void)
 //	one_wall_hack added by MK, 10/13/95: A mega-hack!  Set to !0 to ignore the 
 static void init_boss_segments(segment_array &segments, const object &boss_objp, boss_special_segment_array_t &a, const int size_check, int one_wall_hack)
 {
+	constexpr unsigned QUEUE_SIZE = 256;
 	auto &vmsegptridx = segments.vmptridx;
 	auto &vmsegptr = segments.vmptr;
 #if defined(DXX_BUILD_DESCENT_I)
@@ -2057,15 +2059,15 @@ static void init_boss_segments(segment_array &segments, const object &boss_objp,
 
 		while (tail != head) {
 			int		sidenum;
-			const auto &&segp = vmsegptr(seg_queue[tail++]);
+			auto &segp = *vmsegptr(seg_queue[tail++]);
 
 			tail &= QUEUE_SIZE-1;
 
 			for (sidenum=0; sidenum<MAX_SIDES_PER_SEGMENT; sidenum++) {
-				auto w = WALL_IS_DOORWAY(segp, sidenum);
+				const auto w = WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, segp, segp, sidenum);
 				if ((w & WID_FLY_FLAG) || one_wall_hack)
 				{
-					const auto csegnum = segp->children[sidenum];
+					const auto csegnum = segp.children[sidenum];
 #if defined(DXX_BUILD_DESCENT_II)
 					//	If we get here and w == WID_WALL, then we want to process through this wall, else not.
 					if (IS_CHILD(csegnum)) {
@@ -2173,7 +2175,7 @@ static void do_boss_dying_frame(const vmobjptridx_t objp)
 	if (Boss_dying_start_time + BOSS_DEATH_DURATION - BOSS_DEATH_SOUND_DURATION < GameTime64) {
 		if (!Boss_dying_sound_playing) {
 			Boss_dying_sound_playing = 1;
-			digi_link_sound_to_object2(SOUND_BOSS_SHARE_DIE, objp, 0, F1_0*4, vm_distance{F1_0*1024});	//	F1_0*512 means play twice as loud
+			digi_link_sound_to_object2(SOUND_BOSS_SHARE_DIE, objp, 0, F1_0*4, sound_stack::allow_stacking, vm_distance{F1_0*1024});	//	F1_0*512 means play twice as loud
                 } else if (d_rand() < FrameTime*16)
                         create_small_fireball_on_object(objp, (F1_0 + d_rand()) * 8, 0);
         } else if (d_rand() < FrameTime*8)
@@ -2184,7 +2186,7 @@ static void do_boss_dying_frame(const vmobjptridx_t objp)
 		Boss_dying_start_time=GameTime64; // make sure following only happens one time!
 		do_controlcen_destroyed_stuff(object_none);
 		explode_object(objp, F1_0/4);
-		digi_link_sound_to_object2(SOUND_BADASS_EXPLOSION, objp, 0, F2_0, vm_distance{F1_0*512});
+		digi_link_sound_to_object2(SOUND_BADASS_EXPLOSION, objp, 0, F2_0, sound_stack::allow_stacking, vm_distance{F1_0*512});
 	}
 }
 
@@ -2264,7 +2266,7 @@ static int do_robot_dying_frame(const vmobjptridx_t objp, fix64 start_time, fix 
 	if (start_time + roll_duration - sound_duration < GameTime64) {
 		if (!*dying_sound_playing) {
 			*dying_sound_playing = 1;
-			digi_link_sound_to_object2(death_sound, objp, 0, sound_scale, vm_distance{sound_scale*256});	//	F1_0*512 means play twice as loud
+			digi_link_sound_to_object2(death_sound, objp, 0, sound_scale, sound_stack::allow_stacking, vm_distance{sound_scale*256});	//	F1_0*512 means play twice as loud
 		} else if (d_rand() < FrameTime*16)
 			create_small_fireball_on_object(objp, (F1_0 + d_rand()) * (16 * expl_scale/F1_0)/8, 0);
 	} else if (d_rand() < FrameTime*8)
@@ -2288,7 +2290,7 @@ static void do_boss_dying_frame(const vmobjptridx_t objp)
 		Boss_dying_start_time=GameTime64; // make sure following only happens one time!
 		do_controlcen_destroyed_stuff(object_none);
 		explode_object(objp, F1_0/4);
-		digi_link_sound_to_object2(SOUND_BADASS_EXPLOSION, objp, 0, F2_0, vm_distance{F1_0*512});
+		digi_link_sound_to_object2(SOUND_BADASS_EXPLOSION, objp, 0, F2_0, sound_stack::allow_stacking, vm_distance{F1_0*512});
 	}
 }
 
@@ -2304,7 +2306,7 @@ static int do_any_robot_dying_frame(const vmobjptridx_t objp)
 		if (rval) {
 			objp->ctype.ai_info.dying_start_time = GameTime64; // make sure following only happens one time!
 			explode_object(objp, F1_0/4);
-			digi_link_sound_to_object2(SOUND_BADASS_EXPLOSION, objp, 0, F2_0, vm_distance{F1_0*512});
+			digi_link_sound_to_object2(SOUND_BADASS_EXPLOSION, objp, 0, F2_0, sound_stack::allow_stacking, vm_distance{F1_0*512});
 			if (Current_level_num < 0)
 			{
 				const auto id = get_robot_id(objp);
@@ -3144,7 +3146,7 @@ _exit_cheat:
 		if (Overall_agitation > 70) {
 			if ((dist_to_player < F1_0*200) && (d_rand() < FrameTime/4)) {
 				if (d_rand() * (Overall_agitation - 40) > F1_0*5) {
-					create_path_to_player(obj, 4 + Overall_agitation/8 + Difficulty_level, 1);
+					create_path_to_player(obj, 4 + Overall_agitation/8 + Difficulty_level, create_path_safety_flag::safe);
 					return;
 				}
 			}
@@ -3166,14 +3168,14 @@ _exit_cheat:
 #if defined(DXX_BUILD_DESCENT_II)
 				case ai_mode::AIM_GOTO_PLAYER:
 					move_towards_segment_center(obj);
-					create_path_to_player(obj, 100, 1);
+					create_path_to_player(obj, 100, create_path_safety_flag::safe);
 					break;
 				case ai_mode::AIM_GOTO_OBJECT:
 					Escort_goal_object = ESCORT_GOAL_UNSPECIFIED;
 					break;
 #endif
 				case ai_mode::AIM_CHASE_OBJECT:
-					create_path_to_player(obj, 4 + Overall_agitation/8 + Difficulty_level, 1);
+					create_path_to_player(obj, 4 + Overall_agitation/8 + Difficulty_level, create_path_safety_flag::safe);
 					break;
 				case ai_mode::AIM_STILL:
 #if defined(DXX_BUILD_DESCENT_I)
@@ -3202,7 +3204,7 @@ _exit_cheat:
 					move_towards_segment_center(obj);
 					obj->mtype.phys_info.velocity = {};
 					if (Overall_agitation > (50 - Difficulty_level*4))
-						create_path_to_player(obj, 4 + Overall_agitation/8, 1);
+						create_path_to_player(obj, 4 + Overall_agitation/8, create_path_safety_flag::safe);
 					else {
 						create_n_segment_path(obj, 5, segment_none);
 					}
@@ -3290,7 +3292,7 @@ _exit_cheat:
 						if (dist_to_player < F1_0*30)
 							create_n_segment_path(obj, 5, segment_none);
 						else
-							create_path_to_player(obj, 20, 1);
+							create_path_to_player(obj, 20, create_path_safety_flag::safe);
 					}
 			}
 		}
@@ -3504,7 +3506,7 @@ _exit_cheat:
 						ai_do_actual_firing_stuff(vmobjptridx, obj, aip, ailp, robptr, vec_to_player, dist_to_player, gun_point, player_visibility, object_animates, player_info, aip->CURRENT_GUN);
 					return;
 				}
-				create_path_to_player(obj, 8, 1);
+				create_path_to_player(obj, 8, create_path_safety_flag::safe);
 				ai_multi_send_robot_position(obj, -1);
 			} else if ((player_visibility == 0) && (dist_to_player > F1_0*80) && (!(Game_mode & GM_MULTI))) {
 				// If pretty far from the player, player cannot be seen
@@ -3547,7 +3549,7 @@ _exit_cheat:
 					return;
 				}
 #if defined(DXX_BUILD_DESCENT_I)
-				create_path_to_player(obj, 10, 1);
+				create_path_to_player(obj, 10, create_path_safety_flag::safe);
 				ai_multi_send_robot_position(obj, -1);
 #endif
 			} else if ((aip->CURRENT_STATE != AIS_REST) && (aip->GOAL_STATE != AIS_REST)) {
@@ -3650,9 +3652,13 @@ _exit_cheat:
 			int anger_level = 65;
 
 			if (aip->behavior == ai_behavior::AIB_STATION)
-				if (Point_segs[aip->hide_index + aip->path_length - 1].segnum == aip->hide_segment) {
+			{
+				const std::size_t idx = aip->hide_index + aip->path_length - 1;
+				if (idx < Point_segs.size() && Point_segs[idx].segnum == aip->hide_segment)
+				{
 					anger_level = 64;
 				}
+			}
 
 			compute_vis_and_vec(vmsegptridx, obj, player_info, vis_vec_pos, ailp, vec_to_player, &player_visibility, robptr, &visibility_and_vec_computed);
 

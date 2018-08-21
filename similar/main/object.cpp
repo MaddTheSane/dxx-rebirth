@@ -120,10 +120,10 @@ void object_goto_next_viewer()
 		start_obj++;
 		if (start_obj > Highest_object_index ) start_obj = 0;
 
-		const auto &&objp = vmobjptr(start_obj);
-		if (objp->type != OBJ_NONE)
+		auto &objp = *vmobjptr(start_obj);
+		if (objp.type != OBJ_NONE)
 		{
-			Viewer = objp;
+			Viewer = &objp;
 			return;
 		}
 	}
@@ -216,7 +216,7 @@ void draw_object_tmap_rod(grs_canvas &canvas, const vcobjptridx_t obj, const bit
 #define	CLOAK_FADEOUT_DURATION_ROBOT	F1_0
 
 //do special cloaked render
-static void draw_cloaked_object(grs_canvas &canvas, const vcobjptr_t obj, const g3s_lrgb light, glow_values_t glow, const fix64 cloak_start_time, const fix total_cloaked_time, const fix Cloak_fadein_duration, const fix Cloak_fadeout_duration)
+static void draw_cloaked_object(grs_canvas &canvas, const object_base &obj, const g3s_lrgb light, glow_values_t glow, const fix64 cloak_start_time, const fix total_cloaked_time, const fix Cloak_fadein_duration, const fix Cloak_fadeout_duration)
 {
 	fix cloak_delta_time;
 	fix light_scale=F1_0;
@@ -286,7 +286,7 @@ static void draw_cloaked_object(grs_canvas &canvas, const vcobjptr_t obj, const 
 	if (fading)
 #endif
 	{
-		const unsigned ati = static_cast<unsigned>(obj->rtype.pobj_info.alt_textures) - 1;
+		const unsigned ati = static_cast<unsigned>(obj.rtype.pobj_info.alt_textures) - 1;
 		if (ati < multi_player_textures.size())
 		{
 			alt_textures = multi_player_textures[ati];
@@ -300,10 +300,10 @@ static void draw_cloaked_object(grs_canvas &canvas, const vcobjptr_t obj, const 
 		new_light.g = fixmul(light.g,light_scale);
 		new_light.b = fixmul(light.b,light_scale);
 		glow[0] = fixmul(glow[0],light_scale);
-		draw_polygon_model(canvas, obj->pos,
-				   obj->orient,
-				   obj->rtype.pobj_info.anim_angles,
-				   obj->rtype.pobj_info.model_num,obj->rtype.pobj_info.subobj_flags,
+		draw_polygon_model(canvas, obj.pos,
+				   obj.orient,
+				   obj.rtype.pobj_info.anim_angles,
+				   obj.rtype.pobj_info.model_num, obj.rtype.pobj_info.subobj_flags,
 				   new_light,
 				   &glow,
 				   alt_textures );
@@ -311,10 +311,10 @@ static void draw_cloaked_object(grs_canvas &canvas, const vcobjptr_t obj, const 
 	else {
 		gr_settransblend(canvas, cloak_value, GR_BLEND_NORMAL);
 		g3_set_special_render(draw_tmap_flat);		//use special flat drawer
-		draw_polygon_model(canvas, obj->pos,
-				   obj->orient,
-				   obj->rtype.pobj_info.anim_angles,
-				   obj->rtype.pobj_info.model_num,obj->rtype.pobj_info.subobj_flags,
+		draw_polygon_model(canvas, obj.pos,
+				   obj.orient,
+				   obj.rtype.pobj_info.anim_angles,
+				   obj.rtype.pobj_info.model_num, obj.rtype.pobj_info.subobj_flags,
 				   light,
 				   &glow,
 				   alt_textures );
@@ -609,7 +609,7 @@ void create_small_fireball_on_object(const vmobjptridx_t objp, fix size_scale, i
 			if (objp->type == OBJ_ROBOT)
 				vol *= 2;
 			if (sound_flag)
-				digi_link_sound_to_object(SOUND_EXPLODING_WALL, objp, 0, vol);
+				digi_link_sound_to_object(SOUND_EXPLODING_WALL, objp, 0, vol, sound_stack::allow_stacking);
 		}
 	}
 }
@@ -1239,6 +1239,8 @@ void obj_delete(const vmobjptridx_t obj)
 	if (obj->type == OBJ_DEBRIS)
 		-- ObjectState.Debris_object_count;
 
+	if (obj->movement_type == MT_PHYSICS && (obj->mtype.phys_info.flags & PF_STICK))
+		LevelUniqueStuckObjectState.remove_stuck_object(obj);
 	obj_unlink(Objects.vmptr, Segments.vmptr, obj);
 	DXX_POISON_VAR(*obj, 0xfa);
 	obj->type = OBJ_NONE;		//unused!
@@ -1793,7 +1795,7 @@ static window_event_result object_move_one(const vmobjptridx_t obj)
 					const auto wall_num = segp->sides[sidenum].wall_num;
 					if (wall_num != wall_none && vcwallptr(wall_num)->type == WALL_ILLUSION)
 					{
-						const auto type = check_volatile_wall(obj, segp, sidenum);
+						const auto type = check_volatile_wall(obj, segp->sides[sidenum]);
 						if (type != volatile_wall_result::none)
 						{
 							under_lavafall = 1;
@@ -1801,7 +1803,7 @@ static window_event_result object_move_one(const vmobjptridx_t obj)
 							{
 								playing = 1;
 								const auto sound = (type == volatile_wall_result::lava) ? SOUND_LAVAFALL_HISS : SOUND_SHIP_IN_WATERFALL;
-								digi_link_sound_to_object3( sound, obj, 1, F1_0, vm_distance{i2f(256)}, -1, -1);
+								digi_link_sound_to_object3(sound, obj, 1, F1_0, sound_stack::allow_stacking, vm_distance{i2f(256)}, -1, -1);
 								break;
 							}
 						}

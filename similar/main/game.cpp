@@ -124,6 +124,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "segiter.h"
 
 static fix64 last_timer_value=0;
+static fix64 sync_timer_value=0;
 fix ThisLevelTime=0;
 
 grs_canvas	Screen_3d_window;							// The rectangle for rendering the mine to
@@ -302,6 +303,7 @@ int set_screen_mode(int sm)
 
 	Screen_mode = sm;
 
+#if SDL_MAJOR_VERSION == 1
 	switch( Screen_mode )
 	{
 		case SCREEN_MENU:
@@ -346,6 +348,7 @@ int set_screen_mode(int sm)
 		default:
 			Error("Invalid screen mode %d",sm);
 	}
+#endif
 	return 1;
 }
 
@@ -477,9 +480,14 @@ void calc_frame_time()
 	{
 		const auto timer_value = timer_update();
 		FrameTime = timer_value - last_timer_value;
-		if (FrameTime >= bound)
+		if (FrameTime > 0 && timer_value - sync_timer_value >= bound)
 		{
 			last_timer_value = timer_value;
+
+			sync_timer_value += bound;
+			if (sync_timer_value + bound < timer_value) {
+				sync_timer_value = timer_value;
+			}
 			break;
 		}
 		if (Game_mode & GM_MULTI)
@@ -769,6 +777,7 @@ unsigned write_screenshot_png(PHYSFS_File *const file, const struct tm *const tm
 
 }
 
+#if DXX_USE_SCREENSHOT
 void save_screen_shot(int automap_flag)
 {
 #if DXX_USE_OGL
@@ -881,6 +890,7 @@ void save_screen_shot(int automap_flag)
 	if (write_error)
 		PHYSFS_delete(savename);
 }
+#endif
 
 //initialize flying
 void fly_init(object_base &obj)
@@ -903,8 +913,8 @@ static void do_cloak_stuff(void)
 {
 	range_for (auto &&e, enumerate(partial_range(Players, N_players)))
 	{
-		const auto &&plobj = vmobjptr(e.value.objnum);
-		auto &player_info = plobj->ctype.player_info;
+		auto &plobj = *vmobjptr(e.value.objnum);
+		auto &player_info = plobj.ctype.player_info;
 		auto &pl_flags = player_info.powerup_flags;
 		if (pl_flags & PLAYER_FLAGS_CLOAKED)
 		{
@@ -982,7 +992,7 @@ static void do_afterburner_stuff(object_array &objects)
 
 	if ((Controls.state.afterburner != Last_afterburner_state && Last_afterburner_charge) || (Last_afterburner_state && Last_afterburner_charge && !Afterburner_charge)) {
 		if (Afterburner_charge && Controls.state.afterburner && have_afterburner) {
-			digi_link_sound_to_object3(SOUND_AFTERBURNER_IGNITE, plobj, 1, F1_0, vm_distance{i2f(256)}, AFTERBURNER_LOOP_START, AFTERBURNER_LOOP_END);
+			digi_link_sound_to_object3(SOUND_AFTERBURNER_IGNITE, plobj, 1, F1_0, sound_stack::allow_stacking, vm_distance{i2f(256)}, AFTERBURNER_LOOP_START, AFTERBURNER_LOOP_END);
 			if (Game_mode & GM_MULTI)
 			{
 				multi_send_sound_function (3,SOUND_AFTERBURNER_IGNITE);
@@ -990,7 +1000,7 @@ static void do_afterburner_stuff(object_array &objects)
 			}
 		} else {
 			digi_kill_sound_linked_to_object(plobj);
-			digi_link_sound_to_object2(SOUND_AFTERBURNER_PLAY, plobj, 0, F1_0, vm_distance{i2f(256)});
+			digi_link_sound_to_object2(SOUND_AFTERBURNER_PLAY, plobj, 0, F1_0, sound_stack::allow_stacking, vm_distance{i2f(256)});
 			if (Game_mode & GM_MULTI)
 			{
 			 	multi_send_sound_function (0,0);
@@ -1238,8 +1248,17 @@ static int free_help(newmenu *, const d_event &event, newmenu_item *items)
 	DXX_MENUITEM(VERB, TEXT, "Alt-F2/F3 (\x85-SHIFT-s/o)\t  SAVE/LOAD GAME", HELP_AF2_3)	\
 	DXX_MENUITEM(VERB, TEXT, "Alt-Shift-F2/F3 (\x85-s/o)\t  Quick Save/Load", HELP_ASF2_3)
 #define _DXX_HELP_MENU_PAUSE(VERB) DXX_MENUITEM(VERB, TEXT, "Pause (\x85-P)\t  Pause", HELP_PAUSE)
-#define _DXX_HELP_MENU_AUDIO(VERB)	\
+
+#if DXX_USE_SDL_REDBOOK_AUDIO
+#define _DXX_HELP_MENU_AUDIO_REDBOOK(VERB)	\
 	DXX_MENUITEM(VERB, TEXT, "\x85-E\t  Eject Audio CD", HELP_ASF9)	\
+
+#else
+#define _DXX_HELP_MENU_AUDIO_REDBOOK(VERB)
+#endif
+
+#define _DXX_HELP_MENU_AUDIO(VERB)	\
+	_DXX_HELP_MENU_AUDIO_REDBOOK(VERB)	\
 	DXX_MENUITEM(VERB, TEXT, "\x85-Up/Down\t  Play/Pause " EXT_MUSIC_TEXT, HELP_ASF10)	\
 	DXX_MENUITEM(VERB, TEXT, "\x85-Left/Right\t  Previous/Next Song", HELP_ASF11_12)
 #define _DXX_HELP_MENU_HINT_CMD_KEY(VERB, PREFIX)	\
@@ -1252,8 +1271,17 @@ static int free_help(newmenu *, const d_event &event, newmenu_item *items)
 	DXX_MENUITEM(VERB, TEXT, "Alt-F2/F3\t  SAVE/LOAD GAME", HELP_AF2_3)	\
 	DXX_MENUITEM(VERB, TEXT, "Alt-Shift-F2/F3\t  Fast Save", HELP_ASF2_3)
 #define _DXX_HELP_MENU_PAUSE(VERB)	DXX_MENUITEM(VERB, TEXT, TXT_HELP_PAUSE, HELP_PAUSE)
-#define _DXX_HELP_MENU_AUDIO(VERB)	\
+
+#if DXX_USE_SDL_REDBOOK_AUDIO
+#define _DXX_HELP_MENU_AUDIO_REDBOOK(VERB)	\
 	DXX_MENUITEM(VERB, TEXT, "Alt-Shift-F9\t  Eject Audio CD", HELP_ASF9)	\
+
+#else
+#define _DXX_HELP_MENU_AUDIO_REDBOOK(VERB)
+#endif
+
+#define _DXX_HELP_MENU_AUDIO(VERB)	\
+	_DXX_HELP_MENU_AUDIO_REDBOOK(VERB)	\
 	DXX_MENUITEM(VERB, TEXT, "Alt-Shift-F10\t  Play/Pause " EXT_MUSIC_TEXT, HELP_ASF10)	\
 	DXX_MENUITEM(VERB, TEXT, "Alt-Shift-F11/F12\t  Previous/Next Song", HELP_ASF11_12)
 #define _DXX_HELP_MENU_HINT_CMD_KEY(VERB, PREFIX)
@@ -1727,7 +1755,6 @@ window_event_result GameProcessFrame()
 	do_afterburner_stuff(Objects);
 	do_cloak_stuff();
 	do_invulnerable_stuff(player_info);
-	remove_obsolete_stuck_objects();
 #if defined(DXX_BUILD_DESCENT_II)
 	init_ai_frame(player_info.powerup_flags);
 	result = do_final_boss_frame();
@@ -1795,8 +1822,6 @@ window_event_result GameProcessFrame()
 		return result;					//skip everything else
 	}
 
-	if (Newdemo_state != ND_STATE_PLAYBACK)
-		do_exploding_wall_frame();
 	if ((Newdemo_state != ND_STATE_PLAYBACK) || (Newdemo_vcr_state != ND_STATE_PAUSED)) {
 		do_special_effects();
 		wall_frame_process();
@@ -1970,7 +1995,7 @@ static void flicker_lights(d_flickering_light_state &fls, fvmsegptridx &vmsegptr
 		}
 
 		//make sure this is actually a light
-		if (! (WALL_IS_DOORWAY(segp, sidenum) & WID_RENDER_FLAG))
+		if (! (WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, segp, segp, sidenum) & WID_RENDER_FLAG))
 			continue;
 
 		if ((f.timer -= FrameTime) < 0)
@@ -2073,7 +2098,7 @@ bool FireLaser(player_info &player_info)
 					digi_play_sample( 11, F1_0 );
 #if defined(DXX_BUILD_DESCENT_I)
 					if(Game_mode & GM_MULTI)
-						multi_send_play_sound(11, F1_0);
+						multi_send_play_sound(11, F1_0, sound_stack::allow_stacking);
 #endif
 					const auto cobjp = vmobjptridx(ConsoleObject);
 					apply_damage_to_player(cobjp, cobjp, d_rand() * 4, 0);
@@ -2138,7 +2163,6 @@ int	Last_level_path_created = -1;
 //	Return true if path created, else return false.
 static int mark_player_path_to_segment(fvmobjptridx &vmobjptridx, fvmsegptridx &vmsegptridx, segnum_t segnum)
 {
-	short		player_path_length=0;
 	int		player_hide_index=-1;
 
 	if (Last_level_path_created == Current_level_num) {
@@ -2148,9 +2172,10 @@ static int mark_player_path_to_segment(fvmobjptridx &vmobjptridx, fvmsegptridx &
 	Last_level_path_created = Current_level_num;
 
 	auto objp = vmobjptridx(ConsoleObject);
-	if (create_path_points(objp, objp->segnum, segnum, Point_segs_free_ptr, &player_path_length, 100, 0, 0, segment_none) == -1) {
+	const auto &&cr = create_path_points(objp, objp->segnum, segnum, Point_segs_free_ptr, 100, create_path_random_flag::nonrandom, create_path_safety_flag::unsafe, segment_none);
+	const unsigned player_path_length = cr.second;
+	if (cr.first == create_path_result::early)
 		return 0;
-	}
 
 	player_hide_index = Point_segs_free_ptr - Point_segs;
 	Point_segs_free_ptr += player_path_length;

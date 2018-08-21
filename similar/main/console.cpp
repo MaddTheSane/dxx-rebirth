@@ -281,11 +281,12 @@ static void con_draw(void)
 
 	gr_set_default_canvas();
 	auto &canvas = *grd_curcanv;
+	auto &game_font = *GAME_FONT;
 	gr_set_curfont(canvas, GAME_FONT);
 	const uint8_t color = BM_XRGB(0, 0, 0);
 	gr_settransblend(canvas, 7, GR_BLEND_NORMAL);
 	const auto &&fspacy1 = FSPACY(1);
-	const auto &&line_spacing = LINE_SPACING(canvas);
+	const auto &&line_spacing = LINE_SPACING(*canvas.cv_font, *GAME_FONT);
 	y = fspacy1 + (line_spacing * con_size);
 	gr_rect(canvas, 0, 0, SWIDTH, y, color);
 	gr_settransblend(canvas, GR_FADE_OFF, GR_BLEND_NORMAL);
@@ -301,9 +302,9 @@ static void con_draw(void)
 		auto &b = con_buffer[CON_LINES_MAX - 1 - i];
 		gr_set_fontcolor(canvas, get_console_color_by_priority(b.priority), -1);
 		int w,h;
-		gr_get_string_size(*canvas.cv_font, b.line, &w, &h, nullptr);
+		gr_get_string_size(game_font, b.line, &w, &h, nullptr);
 		y -= h + fspacy1;
-		gr_string(canvas, fspacx1, y, b.line, w, h);
+		gr_string(canvas, game_font, fspacx1, y, b.line, w, h);
 		i++;
 
 		if (y<=0 || CON_LINES_MAX-1-i <= 0 || i < 0)
@@ -311,8 +312,8 @@ static void con_draw(void)
 	}
 	gr_rect(canvas, 0, 0, SWIDTH, line_spacing, color);
 	gr_set_fontcolor(canvas, BM_XRGB(255, 255, 255),-1);
-	gr_printf(canvas, fspacx1, fspacy1, "%s LOG", DESCENT_VERSION);
-	gr_string(canvas, SWIDTH - fspacx(110), fspacy1, "PAGE-UP/DOWN TO SCROLL");
+	gr_printf(canvas, game_font, fspacx1, fspacy1, "%s LOG", DESCENT_VERSION);
+	gr_string(canvas, game_font, SWIDTH - fspacx(110), fspacy1, "PAGE-UP/DOWN TO SCROLL");
 }
 
 static window_event_result con_handler(window *wind,const d_event &event, const unused_window_userdata_t *)

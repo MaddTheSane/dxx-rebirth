@@ -220,9 +220,6 @@ array<ubyte, MAX_SEGMENTS> Automap_visited; // Segment visited list
 #define ZOOM_MIN_VALUE i2f(20*5)
 #define ZOOM_MAX_VALUE i2f(20*100)
 
-#define SLIDE_SPEED 			(350)
-#define ZOOM_SPEED_FACTOR		(500)	//(1500)
-#define ROT_SPEED_DIVISOR		(115000)
 
 // Function Prototypes
 namespace dsx {
@@ -530,10 +527,10 @@ constexpr char system_name[][17] = {
 
 static void name_frame(grs_canvas &canvas, automap *const am)
 {
-	gr_set_curfont(canvas, GAME_FONT);
 	gr_set_fontcolor(canvas, am->green_31, -1);
 	char		name_level_left[128];
 
+	auto &game_font = *GAME_FONT;
 #if defined(DXX_BUILD_DESCENT_I)
 	const char *name_level;
 	if (Current_level_num > 0)
@@ -544,7 +541,7 @@ static void name_frame(grs_canvas &canvas, automap *const am)
 	else
 		name_level = Current_level_name;
 
-	gr_string(canvas, (SWIDTH/64),(SHEIGHT/48),name_level);
+	gr_string(canvas, game_font, (SWIDTH / 64), (SHEIGHT / 48), name_level);
 #elif defined(DXX_BUILD_DESCENT_II)
 	char	name_level_right[128];
 	if (Current_level_num > 0)
@@ -558,15 +555,18 @@ static void name_frame(grs_canvas &canvas, automap *const am)
 	else
 		snprintf(name_level_right, sizeof(name_level_right), " %s", current_level_name);
 
-	gr_string(canvas, (SWIDTH / 64), (SHEIGHT / 48), name_level_left);
+	gr_string(canvas, game_font, (SWIDTH / 64), (SHEIGHT / 48), name_level_left);
 	int wr,h;
-	gr_get_string_size(*canvas.cv_font, name_level_right, &wr, &h, nullptr);
-	gr_string(canvas, canvas.cv_bitmap.bm_w - wr - (SWIDTH / 64), (SHEIGHT / 48), name_level_right, wr, h);
+	gr_get_string_size(game_font, name_level_right, &wr, &h, nullptr);
+	gr_string(canvas, game_font, canvas.cv_bitmap.bm_w - wr - (SWIDTH / 64), (SHEIGHT / 48), name_level_right, wr, h);
 #endif
 }
 
 static void automap_apply_input(automap *am, const vms_matrix &plrorient, const vms_vector &plrpos)
 {
+	constexpr int SLIDE_SPEED = 350;
+	constexpr int ZOOM_SPEED_FACTOR = 500;	//(1500)
+	constexpr int ROT_SPEED_DIVISOR = 115000;
 	if (PlayerCfg.AutomapFreeFlight)
 	{
 		if ( am->controls.state.fire_primary)
@@ -652,7 +652,6 @@ static void draw_automap(fvcobjptr &vcobjptr, automap *am)
 		auto &canvas = *grd_curcanv;
 		if (am->automap_background.get_bitmap_data())
 			show_fullscr(canvas, am->automap_background);
-		gr_set_curfont(canvas, HUGE_FONT);
 		gr_set_fontcolor(canvas, BM_XRGB(20, 20, 20), -1);
 	{
 		int x, y;
@@ -662,9 +661,8 @@ static void draw_automap(fvcobjptr &vcobjptr, automap *am)
 	else
 #endif
 			x = SWIDTH / 8, y = SHEIGHT / 16;
-		gr_string(canvas, x, y, TXT_AUTOMAP);
+		gr_string(canvas, *HUGE_FONT, x, y, TXT_AUTOMAP);
 	}
-		gr_set_curfont(canvas, GAME_FONT);
 		gr_set_fontcolor(canvas, BM_XRGB(20, 20, 20), -1);
 	{
 		int x;
@@ -695,9 +693,10 @@ static void draw_automap(fvcobjptr &vcobjptr, automap *am)
 		y1 = SHEIGHT / 1.083;
 		y2 = SHEIGHT / 1.043;
 #endif
-		gr_string(canvas, x, y0, TXT_TURN_SHIP);
-		gr_string(canvas, x, y1, s1);
-		gr_string(canvas, x, y2, s2);
+		auto &game_font = *GAME_FONT;
+		gr_string(canvas, game_font, x, y0, TXT_TURN_SHIP);
+		gr_string(canvas, game_font, x, y1, s1);
+		gr_string(canvas, game_font, x, y2, s2);
 	}
 
 	}
@@ -728,8 +727,9 @@ static void draw_automap(fvcobjptr &vcobjptr, automap *am)
 		for (unsigned i = 0; i < N_players; ++i)
 		{
 			if ( (i != Player_num) && ((Game_mode & GM_MULTI_COOP) || (get_team(Player_num) == get_team(i)) || (Netgame.game_flag.show_on_map)) )	{
-				const auto &&objp = vcobjptr(vcplayerptr(i)->objnum);
-				if (objp->type == OBJ_PLAYER)
+				auto &plr = *vcplayerptr(i);
+				auto &objp = *vcobjptr(plr.objnum);
+				if (objp.type == OBJ_PLAYER)
 				{
 					const auto &other_ship_rgb = player_rgb[get_player_or_team_color(i)];
 					draw_player(canvas, objp, BM_XRGB(other_ship_rgb.r, other_ship_rgb.g, other_ship_rgb.b));
@@ -784,7 +784,7 @@ static void draw_automap(fvcobjptr &vcobjptr, automap *am)
 			auto &m = MarkerState.message[HighlightMarker];
 			if (m[0])
 			{
-			gr_printf(canvas, (SWIDTH/64), (SHEIGHT/18), "Marker %d: %s", HighlightMarker + 1, &m[0]);
+				gr_printf(canvas, *canvas.cv_font, (SWIDTH/64), (SHEIGHT/18), "Marker %d: %s", HighlightMarker + 1, &m[0]);
 			}
 		}
 	}
@@ -842,11 +842,13 @@ static window_event_result automap_key_command(window *, const d_event &event, a
 
 	switch (c)
 	{
+#if DXX_USE_SCREENSHOT
 		case KEY_PRINT_SCREEN: {
 			gr_set_default_canvas();
 			save_screen_shot(1);
 			return window_event_result::handled;
 		}
+#endif
 		case KEY_ESC:
 			if (am->leave_mode==0)
 			{
@@ -1356,9 +1358,10 @@ static void add_segment_edges(fvcsegptr &vcsegptr, fvcwallptr &vcwallptr, automa
 				} else if (!(WallAnims[w.clip_num].flags & WCF_HIDDEN)) {
 					auto connected_seg = seg->children[sn];
 					if (connected_seg != segment_none) {
-						const auto &vcseg = vcsegptr(connected_seg);
+						auto &vcseg = *vcsegptr(connected_seg);
 						const auto &connected_side = find_connect_side(seg, vcseg);
-						switch (vcwallptr(vcseg->sides[connected_side].wall_num)->keys)
+						auto &wall = *vcwallptr(vcseg.sides[connected_side].wall_num);
+						switch (wall.keys)
 						{
 							case KEY_BLUE:
 								color = am->wall_door_blue;
@@ -1385,7 +1388,7 @@ static void add_segment_edges(fvcsegptr &vcsegptr, fvcwallptr &vcwallptr, automa
 			case WALL_CLOSED:
 				// Make grates draw properly
 				// NOTE: In original D1, is_grate is 1, hidden_flag not used so grates never fade. I (zico) like this so I leave this alone for now. 
-				if (!(is_grate = WALL_IS_DOORWAY(seg, sn) & WID_RENDPAST_FLAG))
+				if (!(is_grate = WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, seg, seg, sn) & WID_RENDPAST_FLAG))
 					hidden_flag = EF_SECRET;
 				color = am->wall_normal_color;
 				break;

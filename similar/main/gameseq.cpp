@@ -149,15 +149,15 @@ public:
 	preserve_player_object_info(const objnum_t &o) :
 		objnum(o)
 	{
-		const auto &&plr = vmobjptr(objnum);
-		plr_shields = plr->shields;
-		plr_info = plr->ctype.player_info;
+		auto &plr = *vcobjptr(objnum);
+		plr_shields = plr.shields;
+		plr_info = plr.ctype.player_info;
 	}
 	void restore() const
 	{
-		const auto &&plr = vmobjptr(objnum);
-		plr->shields = plr_shields;
-		plr->ctype.player_info = plr_info;
+		auto &plr = *vmobjptr(objnum);
+		plr.shields = plr_shields;
+		plr.ctype.player_info = plr_info;
 	}
 };
 
@@ -187,6 +187,13 @@ array<obj_position, MAX_PLAYERS> Player_init;
 // Global variables telling what sort of game we have
 unsigned NumNetPlayerPositions;
 int	Do_appearance_effect=0;
+
+template <object_type_t type>
+static bool is_object_of_type(const object_base &o)
+{
+	return o.type == type;
+}
+
 }
 
 namespace dsx {
@@ -202,12 +209,9 @@ static void verify_console_object()
 }
 
 template <object_type_t type>
-static unsigned count_number_of_objects_of_type()
+static unsigned count_number_of_objects_of_type(fvcobjptr &vcobjptr)
 {
-	const auto predicate = [](const object &o) {
-		return o.type == type;
-	};
-	return std::count_if(vcobjptr.begin(), vcobjptr.end(), predicate);
+	return std::count_if(vcobjptr.begin(), vcobjptr.end(), is_object_of_type<type>);
 }
 
 #define count_number_of_robots	count_number_of_objects_of_type<OBJ_ROBOT>
@@ -387,10 +391,10 @@ void init_player_stats_level(player &plr, object &plrobj, const secret_restore s
 	player_info.mission.last_score = player_info.mission.score;
 
 	plr.num_kills_level = 0;
-	plr.num_robots_level = count_number_of_robots();
+	plr.num_robots_level = count_number_of_robots(vcobjptr);
 	plr.num_robots_total += plr.num_robots_level;
 
-	plr.hostages_level = count_number_of_hostages();
+	plr.hostages_level = count_number_of_hostages(vcobjptr);
 	plr.hostages_total += plr.hostages_level;
 
 	if (secret_flag == secret_restore::none) {
@@ -591,7 +595,7 @@ static void set_sound_sources(fvcsegptridx &vcsegptridx)
 			if ((tm=seg->sides[sidenum].tmap_num2) != 0)
 				if ((ec = TmapInfo[tm & 0x3fff].eclip_num) != eclip_none)
 #elif defined(DXX_BUILD_DESCENT_II)
-			auto wid = WALL_IS_DOORWAY(seg, sidenum);
+			const auto wid = WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, seg, seg, sidenum);
 			if (wid & WID_RENDER_FLAG)
 				if ((((tm = seg->sides[sidenum].tmap_num2) != 0) &&
 					 ((ec = TmapInfo[tm & 0x3fff].eclip_num) != eclip_none)) ||
@@ -637,13 +641,15 @@ void create_player_appearance_effect(const object_base &player_obj)
 		? vm_vec_scale_add(player_obj.pos, player_obj.orient.fvec, fixmul(player_obj.size, flash_dist))
 		: player_obj.pos;
 
-	const auto &&effect_obj = object_create_explosion(vmsegptridx(player_obj.segnum), pos, player_obj.size, VCLIP_PLAYER_APPEARANCE);
+	const auto &&seg = vmsegptridx(player_obj.segnum);
+	const auto &&effect_obj = object_create_explosion(seg, pos, player_obj.size, VCLIP_PLAYER_APPEARANCE);
 
 	if (effect_obj) {
 		effect_obj->orient = player_obj.orient;
 
-		if ( Vclip[VCLIP_PLAYER_APPEARANCE].sound_num > -1 )
-			digi_link_sound_to_object( Vclip[VCLIP_PLAYER_APPEARANCE].sound_num, effect_obj, 0, F1_0);
+		const auto sound_num = Vclip[VCLIP_PLAYER_APPEARANCE].sound_num;
+		if (sound_num > -1)
+			digi_link_sound_to_pos(sound_num, seg, 0, effect_obj->pos, 0, F1_0);
 	}
 }
 }
@@ -1362,7 +1368,7 @@ static void DoEndGame()
 #if defined(DXX_BUILD_DESCENT_II)
 		int played=MOVIE_NOT_PLAYED;	//default is not played
 
-		played = PlayMovie(ENDMOVIE ".tex", ENDMOVIE,MOVIE_REQUIRED);
+		played = PlayMovie(ENDMOVIE ".tex", ENDMOVIE ".mve",MOVIE_REQUIRED);
 		if (!played)
 #endif
 		{
@@ -1684,7 +1690,7 @@ window_event_result StartNewLevelSub(const int level_num, const int page_in_text
 	init_morphs();
 	init_all_matcens();
 	reset_palette_add();
-	init_stuck_objects();
+	LevelUniqueStuckObjectState.init_stuck_objects();
 #if defined(DXX_BUILD_DESCENT_II)
 	init_smega_detonates();
 	init_thief_for_level();
@@ -1760,13 +1766,13 @@ struct intro_movie_t {
 };
 
 const array<intro_movie_t, 7> intro_movie{{
-	{ 1,"pla"},
-							{ 5,"plb"},
-							{ 9,"plc"},
-							{13,"pld"},
-							{17,"ple"},
-							{21,"plf"},
-							{24,"plg"}
+	{ 1, "PLA"},
+	{ 5, "PLB"},
+	{ 9, "PLC"},
+	{13, "PLD"},
+	{17, "PLE"},
+	{21, "PLF"},
+	{24, "PLG"}
 }};
 
 static void ShowLevelIntro(int level_num)
@@ -2044,9 +2050,6 @@ static void StartLevel(int random_flag)
 	{
 		disable_matcens(); // ... disable matcens and ...
 		clear_transient_objects(0); // ... clear all transient objects.
-#if defined(DXX_BUILD_DESCENT_II)
-		clear_stuck_objects(); // and stuck ones.
-#endif
 	}
 
 	ai_reset_all_paths();

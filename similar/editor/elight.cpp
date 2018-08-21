@@ -41,7 +41,7 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 // -----------------------------------------------------------------------------
 //	Return light intensity at an instance of a vertex on a side in a segment.
-static fix get_light_intensity(const side &s, const uint_fast32_t vert)
+static fix get_light_intensity(const unique_side &s, const uint_fast32_t vert)
 {
 	Assert(vert <= 3);
 	return s.uvls[vert].l;
@@ -64,7 +64,7 @@ static fix clamp_light_intensity(const fix intensity)
 
 // -----------------------------------------------------------------------------
 //	Set light intensity at a vertex, saturating in .5 to 15.5
-static void set_light_intensity(side &s, const uint_fast32_t vert, const fix intensity)
+static void set_light_intensity(unique_side &s, const uint_fast32_t vert, const fix intensity)
 {
 	Assert(vert <= 3);
 	s.uvls[vert].l = clamp_light_intensity(intensity);
@@ -79,7 +79,7 @@ static void set_light_intensity(const vmsegptr_t segp, const uint_fast32_t siden
 
 // -----------------------------------------------------------------------------
 //	Add light intensity to a vertex, saturating in .5 to 15.5
-static void add_light_intensity_all_verts(side &s, const fix intensity)
+static void add_light_intensity_all_verts(unique_side &s, const fix intensity)
 {
 	range_for (auto &u, s.uvls)
 		u.l = clamp_light_intensity(u.l + intensity);
@@ -100,12 +100,12 @@ static void add_light_intensity_all_verts(side &s, const fix intensity)
 //		Note that it is also possible to visit the original light-casting segment, for example
 //		going from segment 0 to 2, then from 2 to 0.  This is peculiar and probably not
 //		desired, but not entirely invalid.  2 reflects some light back to 0.
-static void apply_light_intensity(const vmsegptr_t segp, int sidenum, fix intensity, int depth)
+static void apply_light_intensity(const vmsegptr_t segp, const unsigned sidenum, fix intensity, const unsigned depth)
 {
 	if (intensity == 0)
 		return;
 
-	auto wid_result = WALL_IS_DOORWAY(segp, sidenum);
+	const auto wid_result = WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, segp, segp, sidenum);
 	if (!(wid_result & WID_RENDPAST_FLAG)) {
 		add_light_intensity_all_verts(segp->sides[sidenum], intensity);
 		return;										// we return because there is a wall here, and light does not shine through walls

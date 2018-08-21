@@ -86,18 +86,18 @@ static int     Search_mode=0;                      //if true, searching for segm
 static int Search_x,Search_y;
 static int	Automap_test=0;		//	Set to 1 to show wireframe in automap mode.
 
-static void draw_seg_objects(const vcsegptr_t seg)
+static void draw_seg_objects(grs_canvas &canvas, const unique_segment &seg)
 {
-	range_for (const auto obj, objects_in(*seg, vcobjptridx, vcsegptr))
+	range_for (const auto obj, objects_in(seg, vcobjptridx, vcsegptr))
 	{
 		auto sphere_point = g3_rotate_point(obj->pos);
-		const uint8_t color = (obj->type==OBJ_PLAYER && static_cast<const icobjptridx_t::index_type>(obj) > 0)
+		const uint8_t color = (obj->type == OBJ_PLAYER && static_cast<icobjptridx_t::index_type>(obj) > 0)
 			? BM_XRGB(0,  25, 0)
 			: (obj == ConsoleObject
 				? PLAYER_COLOR
 				: ROBOT_COLOR
 			);
-		g3_draw_sphere(*grd_curcanv, sphere_point, obj->size, color);
+		g3_draw_sphere(canvas, sphere_point, obj->size, color);
 	}
 }
 
@@ -384,7 +384,7 @@ static void add_edges(const vcsegptridx_t seg)
 
 		range_for (auto &&e, enumerate(seg->sides))
 		{
-			auto sidep = &e.value;
+			auto &sidep = e.value;
 			int	num_vertices;
 			const auto v = create_all_vertex_lists(seg, sidep, e.idx);
 			const auto &num_faces = v.first;
@@ -398,7 +398,7 @@ static void add_edges(const vcsegptridx_t seg)
 				int	en;
 
 				//Note: normal check appears to be the wrong way since the normals points in, but we're looking from the outside
-				if (g3_check_normal_facing(vcvertptr(seg->verts[vertex_list[fn*3]]),sidep->normals[fn]))
+				if (g3_check_normal_facing(vcvertptr(seg->verts[vertex_list[fn*3]]), sidep.normals[fn]))
 					flag = ET_NOTFACING;
 				else
 					flag = ET_FACING;
@@ -591,7 +591,7 @@ static void draw_mine_all(int automap_flag)
 				check_segment(segp);
 			else {
 				add_edges(segp);
-				draw_seg_objects(segp);
+				draw_seg_objects(*grd_curcanv, segp);
 			}
 		}
 	}
@@ -829,20 +829,20 @@ void draw_world(grs_canvas *screen_canvas,editor_view *v,const vmsegptridx_t min
 		// Label the window
 		gr_set_fontcolor(*grd_curcanv, (v==current_view)?CRED:CWHITE, -1);
 		if ( screen_canvas == LargeViewBox->canvas.get() ) {
-			gr_ustring(*grd_curcanv, 5, 5, "USER VIEW");
+			gr_ustring(*grd_curcanv, *grd_curcanv->cv_font, 5, 5, "USER VIEW");
 			switch (Large_view_index) {
-				case 0: gr_ustring(*grd_curcanv, 85, 5, "-- TOP");	break;
-				case 1: gr_ustring(*grd_curcanv, 85, 5, "-- FRONT");	break;
-				case 2: gr_ustring(*grd_curcanv, 85, 5, "-- RIGHT");	break;
+				case 0: gr_ustring(*grd_curcanv, *grd_curcanv->cv_font, 85, 5, "-- TOP");	break;
+				case 1: gr_ustring(*grd_curcanv, *grd_curcanv->cv_font, 85, 5, "-- FRONT");	break;
+				case 2: gr_ustring(*grd_curcanv, *grd_curcanv->cv_font, 85, 5, "-- RIGHT");	break;
 			}			
 		} else
 #if ORTHO_VIEWS
 		 else if ( screen_canvas == TopViewBox->canvas )
-			gr_ustring(*grd_curcanv, 5, 5, "TOP");
+			gr_ustring(*grd_curcanv, *grd_curcanv->cv_font, 5, 5, "TOP");
 		else if ( screen_canvas == FrontViewBox->canvas )
-			gr_ustring(*grd_curcanv, 5, 5, "FRONT");
+			gr_ustring(*grd_curcanv, *grd_curcanv->cv_font, 5, 5, "FRONT");
 		else if ( screen_canvas == RightViewBox->canvas )
-			gr_ustring(*grd_curcanv, 5, 5, "RIGHT");
+			gr_ustring(*grd_curcanv, *grd_curcanv->cv_font, 5, 5, "RIGHT");
 #else
 			Error("Ortho views have been removed, what gives?\n");
 #endif

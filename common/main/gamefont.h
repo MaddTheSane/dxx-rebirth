@@ -52,19 +52,62 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 constexpr std::integral_constant<unsigned, 5> MAX_FONTS{};
 
-extern float FNTScaleX, FNTScaleY;
-
 // add (scaled) spacing to given font coordinate
-#define LINE_SPACING(CANVAS)    (FNTScaleY * ((CANVAS).cv_font->ft_h + (GAME_FONT->ft_h / 5)))
 
 extern array<grs_font_ptr, MAX_FONTS> Gamefonts;
 
+class base_font_scale_proportion
+{
+protected:
+	float f;
+public:
+	base_font_scale_proportion() = default;
+	explicit constexpr base_font_scale_proportion(const float v) :
+		f(v)
+	{
+	}
+	explicit operator float() const
+	{
+		return f;
+	}
+	float operator*(const float v) const
+	{
+		return f * v;
+	}
+	void reset(const float v)
+	{
+		f = v;
+	}
+};
+
 template <char tag>
-class font_scaled_float
+class font_scale_proportion : public base_font_scale_proportion
+{
+public:
+	DXX_INHERIT_CONSTRUCTORS(font_scale_proportion, base_font_scale_proportion);
+	bool operator!=(const font_scale_proportion &rhs) const
+	{
+		return f != rhs.f;
+	}
+};
+
+using font_x_scale_proportion = font_scale_proportion<'x'>;
+using font_y_scale_proportion = font_scale_proportion<'y'>;
+
+extern font_x_scale_proportion FNTScaleX;
+extern font_y_scale_proportion FNTScaleY;
+
+static inline float LINE_SPACING(const grs_font &active_font, const grs_font &game_font)
+{
+	return FNTScaleY * (active_font.ft_h + (game_font.ft_h / 5));
+}
+
+/* All the logic is in the base class */
+class base_font_scaled_float
 {
 	const float f;
 public:
-	explicit font_scaled_float(float v) :
+	explicit constexpr base_font_scaled_float(const float v) :
 		f(v)
 	{
 	}
@@ -74,13 +117,23 @@ public:
 	}
 };
 
+/* Use an otherwise unnecessary tag to prevent mixing x-scale with
+ * y-scale.
+ */
+template <char tag>
+class font_scaled_float : public base_font_scaled_float
+{
+public:
+	DXX_INHERIT_CONSTRUCTORS(font_scaled_float, base_font_scaled_float);
+};
+
 template <char tag>
 class font_scale_float
 {
 	const float scale;
 public:
 	using scaled = font_scaled_float<tag>;
-	font_scale_float(float s) :
+	constexpr font_scale_float(const float s) :
 		scale(s)
 	{
 	}

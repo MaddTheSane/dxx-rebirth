@@ -138,14 +138,14 @@ static void generate_starfield();
 static void start_endlevel_flythrough(flythrough_data *flydata,const vmobjptr_t obj,fix speed);
 
 #if defined(DXX_BUILD_DESCENT_II)
-constexpr char movie_table[] =	{	'a','b','c',
-							'a',
-							'd','f','d','f',
-							'g','h','i','g',
-							'j','k','l','j',
-							'm','o','m','o',
-							'p','q','p','q'
-					};
+constexpr array<const char, 24> movie_table{{
+	'A','B','C','A',
+	'D','F','D','F',
+	'G','H','I','G',
+	'J','K','L','J',
+	'M','O','M','O',
+	'P','Q','P','Q'
+}};
 static int endlevel_movie_played = MOVIE_NOT_PLAYED;
 #endif
 
@@ -181,7 +181,7 @@ static fixang delta_ang(fixang a,fixang b)
 }
 
 //return though which side of seg0 is seg1
-static size_t matt_find_connect_side(const segment &seg0, const vcsegidx_t seg1)
+static size_t matt_find_connect_side(const shared_segment &seg0, const vcsegidx_t seg1)
 {
 	auto &children = seg0.children;
 	return std::distance(children.begin(), std::find(children.begin(), children.end(), seg1));
@@ -193,7 +193,6 @@ static size_t matt_find_connect_side(const segment &seg0, const vcsegidx_t seg1)
 //returns movie played status.  see movie.h
 static int start_endlevel_movie()
 {
-	char movie_name[] = "esa.mve";
 	int r;
 	palette_array_t save_pal;
 
@@ -202,17 +201,17 @@ static int start_endlevel_movie()
 	//Assert(N_MOVIES >= Last_level);
 	//Assert(N_MOVIES_SECRET >= -Last_secret_level);
 
+	const auto current_level_num = Current_level_num;
 	if (is_SHAREWARE)
 		return 0;
 	if (!is_D2_OEM)
-		if (Current_level_num == Last_level)
+		if (current_level_num == Last_level)
 			return 1;   //don't play movie
 
-	if (Current_level_num > 0)
-		movie_name[2] = movie_table[Current_level_num-1];
-	else {
+	if (!(current_level_num > 0))
 		return 0;       //no escapes for secret level
-	}
+	char movie_name[] = "ESA.MVE";
+	movie_name[2] = movie_table[Current_level_num-1];
 
 	save_pal = gr_palette;
 
@@ -866,14 +865,15 @@ static int find_exit_side(const object_base &obj)
 
 	vm_vec_normalized_dir_quick(prefvec, obj.pos, obj.last_pos);
 
-	const auto &&pseg = vcsegptr(obj.segnum);
+	auto &pseg = *vcsegptr(obj.segnum);
 	const auto segcenter = compute_segment_center(vcvertptr, pseg);
 
 	best_side=-1;
 	for (int i=MAX_SIDES_PER_SEGMENT;--i >= 0;) {
 		fix d;
 
-		if (pseg->children[i]!=segment_none) {
+		if (pseg.children[i] != segment_none)
+		{
 			auto sidevec = compute_center_point_on_side(vcvertptr, pseg, i);
 			vm_vec_normalized_dir_quick(sidevec,sidevec,segcenter);
 			d = vm_vec_dot(sidevec,prefvec);
@@ -1149,7 +1149,7 @@ void do_endlevel_flythrough(flythrough_data *flydata)
 	//check new player seg
 
 	update_object_seg(obj);
-	const auto &&pseg = vmsegptr(obj->segnum);
+	auto &pseg = *vcsegptr(obj->segnum);
 
 	if (flydata->first_time || obj->segnum != old_player_seg) {		//moved into new seg
 		fix seg_time;
@@ -1166,13 +1166,13 @@ void do_endlevel_flythrough(flythrough_data *flydata)
 			exit_side = Side_opposite[entry_side];
 		}
 
-		if (flydata->first_time || entry_side == side_none || pseg->children[exit_side] == segment_none)
+		if (flydata->first_time || entry_side == side_none || pseg.children[exit_side] == segment_none)
 			exit_side = find_exit_side(obj);
 
 		{										//find closest side to align to
 			fix d,largest_d=-f1_0;
 			for (int i=0;i<6;i++) {
-				d = vm_vec_dot(pseg->sides[i].normals[0],flydata->obj->orient.uvec);
+				d = vm_vec_dot(pseg.sides[i].normals[0], flydata->obj->orient.uvec);
 				if (d > largest_d) {largest_d = d; up_side=i;}
 			}
 
@@ -1182,9 +1182,9 @@ void do_endlevel_flythrough(flythrough_data *flydata)
 
 		//where we are heading (center of exit_side)
 		auto dest_point = compute_center_point_on_side(vcvertptr, pseg, exit_side);
-		const vms_vector nextcenter = (pseg->children[exit_side] == segment_exit)
+		const vms_vector nextcenter = (pseg.children[exit_side] == segment_exit)
 			? dest_point
-			: compute_segment_center(vcvertptr, vcsegptr(pseg->children[exit_side]));
+			: compute_segment_center(vcvertptr, vcsegptr(pseg.children[exit_side]));
 
 		//update target point and movement points
 
@@ -1222,7 +1222,7 @@ void do_endlevel_flythrough(flythrough_data *flydata)
 		const auto curcenter = compute_segment_center(vcvertptr, pseg);
 		vm_vec_sub(flydata->headvec,nextcenter,curcenter);
 
-		const auto dest_orient = vm_vector_2_matrix(flydata->headvec,&pseg->sides[up_side].normals[0],nullptr);
+		const auto dest_orient = vm_vector_2_matrix(flydata->headvec, &pseg.sides[up_side].normals[0], nullptr);
 		//where we want to be pointing
 		const auto dest_angles = vm_extract_angles_matrix(dest_orient);
 
@@ -1245,10 +1245,6 @@ void do_endlevel_flythrough(flythrough_data *flydata)
 
 	flydata->first_time=0;
 }
-
-#define JOY_NULL 15
-#define ROT_SPEED 8		//rate of rotation while key held down
-#define VEL_SPEED (15)	//rate of acceleration while key held down
 
 #include "key.h"
 #include "joy.h"

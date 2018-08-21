@@ -454,6 +454,8 @@ static int save_mine_data(PHYSFS_File * SaveFile)
 
 	if (segment_offset != PHYSFS_tell(SaveFile))
 		Error( "OFFSETS WRONG IN MINE.C!" );
+	Error("Sorry, v20 segment support is broken.");
+#if 0
 	PHYSFS_write( SaveFile, &Segments.front(), sizeof(segment), Num_segments );
 
 	//===================== SAVE NEWSEGMENT INFO ======================
@@ -461,6 +463,7 @@ static int save_mine_data(PHYSFS_File * SaveFile)
 	if (newsegment_offset != PHYSFS_tell(SaveFile))
 		Error( "OFFSETS WRONG IN MINE.C!" );
 	PHYSFS_write( SaveFile, &New_segment, sizeof(segment), 1 );
+#endif
 
 	if (newseg_verts_offset != PHYSFS_tell(SaveFile))
 		Error( "OFFSETS WRONG IN MINE.C!" );
@@ -531,13 +534,13 @@ static void write_verts(const vcsegptr_t seg, PHYSFS_File *SaveFile)
 		PHYSFS_writeSLE16(SaveFile, i);
 }
 
-static void write_special(const vcsegptr_t seg, ubyte bit_mask, PHYSFS_File *SaveFile)
+static void write_special(const shared_segment &seg, const unsigned bit_mask, PHYSFS_File *const SaveFile)
 {
 	if (bit_mask & (1 << MAX_SIDES_PER_SEGMENT))
 	{
-		PHYSFSX_writeU8(SaveFile, seg->special);
-		PHYSFSX_writeU8(SaveFile, seg->matcen_num);
-		PHYSFS_writeULE16(SaveFile, seg->station_idx);
+		PHYSFSX_writeU8(SaveFile, seg.special);
+		PHYSFSX_writeU8(SaveFile, seg.matcen_num);
+		PHYSFS_writeULE16(SaveFile, seg.station_idx);
 	}
 }
 // -----------------------------------------------------------------------------

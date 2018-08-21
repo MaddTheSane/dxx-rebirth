@@ -86,6 +86,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define NoFriendlyFireStr "NoFriendlyFire"
 #define MouselookFlagsStr "Mouselook"
 #define TrackerStr "Tracker"
+#define TrackerNATHPStr "trackernat"
 #define NGPVersionStr "ngp version"
 
 #if defined(DXX_BUILD_DESCENT_I)
@@ -228,7 +229,7 @@ int new_player_config()
 	PlayerCfg.KeySettingsRebirth = DefaultKeySettingsRebirth;
 	kc_set_controls();
 
-	PlayerCfg.DefaultDifficulty = 1;
+	PlayerCfg.DefaultDifficulty = DEFAULT_DIFFICULTY;
 	PlayerCfg.AutoLeveling = 1;
 	PlayerCfg.NHighestLevels = 1;
 	PlayerCfg.HighestLevels[0].Shortname[0] = 0; //no name for mission 0
@@ -875,7 +876,10 @@ int read_player_file()
 	saved_game_version = PHYSFSX_readShort(file);
 	player_struct_version = PHYSFSX_readShort(file);
 	PlayerCfg.NHighestLevels = PHYSFSX_readInt(file);
-	PlayerCfg.DefaultDifficulty = PHYSFSX_readInt(file);
+	{
+		const unsigned u = PHYSFSX_readInt(file);
+		PlayerCfg.DefaultDifficulty = cast_clamp_difficulty(u);
+	}
 	PlayerCfg.AutoLeveling = PHYSFSX_readInt(file);
 #elif defined(DXX_BUILD_DESCENT_II)
 	player_file_version = PHYSFSX_readShort(file);
@@ -974,7 +978,7 @@ int read_player_file()
 	}
 
 	PHYSFS_seek(file,PHYSFS_tell(file)+2*sizeof(short)); //skip Game_window_w,Game_window_h
-	PlayerCfg.DefaultDifficulty = PHYSFSX_readByte(file);
+	PlayerCfg.DefaultDifficulty = cast_clamp_difficulty(PHYSFSX_readByte(file));
 	PlayerCfg.AutoLeveling       = PHYSFSX_readByte(file);
 	PHYSFS_seek(file,PHYSFS_tell(file)+sizeof(sbyte)); // skip ReticleOn
 	PlayerCfg.CockpitMode[0] = PlayerCfg.CockpitMode[1] = static_cast<cockpit_mode_t>(PHYSFSX_readByte(file));
@@ -1426,6 +1430,9 @@ static void convert_duplicate_powerup_integer(packed_netduplicate_items &d, cons
 void read_netgame_profile(netgame_info *ng)
 {
 	char filename[PATH_MAX];
+#if DXX_USE_TRACKER
+	ng->TrackerNATWarned = TrackerNATHolePunchWarn::Unset;
+#endif
 
 	snprintf(filename, sizeof(filename), PLAYER_DIRECTORY_STRING("%.8s.ngp"), static_cast<const char *>(get_local_player().callsign));
 	auto file = PHYSFSX_openReadBuffered(filename);
@@ -1449,7 +1456,11 @@ void read_netgame_profile(netgame_info *ng)
 		else if (cmp(lb, eq, RefusePlayersStr))
 			convert_integer(ng->RefusePlayers, value);
 		else if (cmp(lb, eq, DifficultyStr))
-			convert_integer(ng->difficulty, value);
+		{
+			uint8_t difficulty;
+			if (convert_integer(difficulty, value))
+				ng->difficulty = cast_clamp_difficulty(difficulty);
+		}
 		else if (cmp(lb, eq, GameFlagsStr))
 		{
 			packed_game_flags p;
@@ -1505,6 +1516,8 @@ void read_netgame_profile(netgame_info *ng)
 #if DXX_USE_TRACKER
 		else if (cmp(lb, eq, TrackerStr))
 			convert_integer(ng->Tracker, value);
+		else if (cmp(lb, eq, TrackerNATHPStr))
+			ng->TrackerNATWarned = static_cast<TrackerNATHolePunchWarn>(strtoul(value, 0, 10));
 #endif
 	}
 }
@@ -1546,8 +1559,9 @@ void write_netgame_profile(netgame_info *ng)
 	PHYSFSX_printf(file, MouselookFlagsStr "=%i\n", ng->MouselookFlags);
 #if DXX_USE_TRACKER
 	PHYSFSX_printf(file, TrackerStr "=%i\n", ng->Tracker);
+	PHYSFSX_printf(file, TrackerNATHPStr "=%i\n", ng->TrackerNATWarned);
 #else
-	PHYSFSX_printf(file, TrackerStr "=0\n");
+	PHYSFSX_puts_literal(file, TrackerStr "=0\n" TrackerNATHPStr "=0\n");
 #endif
 	PHYSFSX_printf(file, NGPVersionStr "=" DXX_VERSION_STR "\n");
 }

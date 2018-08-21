@@ -27,6 +27,10 @@
 
 namespace dcx {
 
+#if SDL_MAJOR_VERSION == 2
+extern SDL_Window *g_pRebirthSDLMainWindow;
+#endif
+
 window_event_result event_poll()
 {
 	SDL_Event event;
@@ -42,8 +46,10 @@ window_event_result event_poll()
 			case SDL_KEYDOWN:
 			case SDL_KEYUP:
 				if (clean_uniframe)
+				{
+					clean_uniframe=0;
 					unicode_frame_buffer = {};
-				clean_uniframe=0;
+				}
 				highest_result = std::max(key_handler(&event.key), highest_result);
 				break;
 			case SDL_MOUSEBUTTONDOWN:
@@ -85,9 +91,7 @@ window_event_result event_poll()
 	// Send the idle event if there were no other events (or they were ignored)
 	if (highest_result == window_event_result::ignored)
 	{
-		d_event ievent;
-		
-		ievent.type = EVENT_IDLE;
+		const d_event ievent{EVENT_IDLE};
 		highest_result = std::max(event_send(ievent), highest_result);
 	}
 	else
@@ -147,7 +151,6 @@ window_event_result event_send(const d_event &event)
 // Uses the old system for now, but this may change
 window_event_result event_process(void)
 {
-	d_event event;
 	window *wind = window_get_front();
 	window_event_result highest_result;
 
@@ -163,8 +166,8 @@ window_event_result event_process(void)
 	// with the same pointer value as the deleted one
 	if ((highest_result == window_event_result::deleted) || (window_get_front() != wind))
 		return highest_result;
-	
-	event.type = EVENT_WINDOW_DRAW;	// then draw all visible windows
+
+	const d_event event{EVENT_WINDOW_DRAW};	// then draw all visible windows
 	for (wind = window_get_first(); wind != nullptr;)
 	{
 		if (window_is_visible(wind))
@@ -193,7 +196,13 @@ window_event_result event_process(void)
 template <bool activate_focus>
 static void event_change_focus()
 {
-	SDL_WM_GrabInput(activate_focus && CGameCfg.Grabinput && likely(!CGameArg.DbgForbidConsoleGrab) ? SDL_GRAB_ON : SDL_GRAB_OFF);
+	const auto enable_grab = activate_focus && CGameCfg.Grabinput && likely(!CGameArg.DbgForbidConsoleGrab);
+#if SDL_MAJOR_VERSION == 1
+	SDL_WM_GrabInput(enable_grab ? SDL_GRAB_ON : SDL_GRAB_OFF);
+#elif SDL_MAJOR_VERSION == 2
+	SDL_SetWindowGrab(g_pRebirthSDLMainWindow, enable_grab ? SDL_TRUE : SDL_FALSE);
+	SDL_SetRelativeMouseMode(enable_grab ? SDL_TRUE : SDL_FALSE);
+#endif
 	if (activate_focus)
 		mouse_disable_cursor();
 	else

@@ -36,6 +36,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "object.h"
 #include "gamemine.h"
 #include "dxxerror.h"
+#include "console.h"
 #include "gameseg.h"
 #include "game.h"
 #include "piggy.h"
@@ -61,9 +62,25 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "partial_range.h"
 #include "segiter.h"
 
-static void paging_touch_vclip(const vclip &vc)
+static void paging_touch_vclip(const vclip &vc, const unsigned line)
+#define paging_touch_vclip(V)	paging_touch_vclip(V, __LINE__)
 {
-	range_for (auto &i, partial_const_range(vc.frames, vc.num_frames))
+	using range_type = partial_range_t<const bitmap_index*>;
+	union {
+		uint8_t storage[1];
+		range_type r;
+	} u{};
+	try
+	{
+		new(&u.r) range_type((partial_const_range)(__FILE__, line, "vc.frames", vc.frames, vc.num_frames));
+		static_assert(std::is_trivially_destructible<range_type>::value, "partial_range destructor not called");
+	}
+	catch (const range_type::partial_range_error &e)
+	{
+		con_puts(CON_URGENT, e.what());
+		return;
+	}
+	range_for (auto &i, u.r)
 	{
 		PIGGY_PAGE_IN(i);
 	}
@@ -186,24 +203,25 @@ static void paging_touch_robot(uint_fast32_t robot_index)
 	paging_touch_robot(Robot_info[robot_index]);
 }
 
-static void paging_touch_object(const vcobjptr_t obj)
+static void paging_touch_object(const object_base &obj)
 {
 	int v;
 
-	switch (obj->render_type) {
+	switch (obj.render_type) {
 
 		case RT_NONE:	break;		//doesn't render, like the player
 
 		case RT_POLYOBJ:
-			if ( obj->rtype.pobj_info.tmap_override != -1 )
-				PIGGY_PAGE_IN( Textures[obj->rtype.pobj_info.tmap_override] );
+			if (obj.rtype.pobj_info.tmap_override != -1)
+				PIGGY_PAGE_IN(Textures[obj.rtype.pobj_info.tmap_override]);
 			else
-				paging_touch_model(obj->rtype.pobj_info.model_num);
+				paging_touch_model(obj.rtype.pobj_info.model_num);
 			break;
 
 		case RT_POWERUP:
-			if ( obj->rtype.vclip_info.vclip_num > -1 ) {
-				paging_touch_vclip(Vclip[obj->rtype.vclip_info.vclip_num]);
+			if (obj.rtype.vclip_info.vclip_num > -1)
+			{
+				paging_touch_vclip(Vclip[obj.rtype.vclip_info.vclip_num]);
 			}
 			break;
 
@@ -214,13 +232,13 @@ static void paging_touch_object(const vcobjptr_t obj)
 		case RT_WEAPON_VCLIP: break;
 
 		case RT_HOSTAGE:
-			paging_touch_vclip(Vclip[obj->rtype.vclip_info.vclip_num]);
+			paging_touch_vclip(Vclip[obj.rtype.vclip_info.vclip_num]);
 			break;
 
 		case RT_LASER: break;
  	}
 
-	switch (obj->type) {	
+	switch (obj.type) {	
 		default:
 			break;
 	case OBJ_PLAYER:	
@@ -233,8 +251,9 @@ static void paging_touch_object(const vcobjptr_t obj)
 		break;
 	case OBJ_CNTRLCEN:
 		paging_touch_weapon( weapon_id_type::CONTROLCEN_WEAPON_NUM );
-		if (Dead_modelnums[obj->rtype.pobj_info.model_num] != -1)	{
-			paging_touch_model( Dead_modelnums[obj->rtype.pobj_info.model_num] );
+		if (Dead_modelnums[obj.rtype.pobj_info.model_num] != -1)
+		{
+			paging_touch_model(Dead_modelnums[obj.rtype.pobj_info.model_num]);
 		}
 		break;
 	}
@@ -244,15 +263,13 @@ static void paging_touch_object(const vcobjptr_t obj)
 
 static void paging_touch_side(const vcsegptr_t segp, int sidenum )
 {
-	int tmap1, tmap2;
-
-	if (!(WALL_IS_DOORWAY(segp,sidenum) & WID_RENDER_FLAG))
+	if (!(WALL_IS_DOORWAY(GameBitmaps, Textures, vcwallptr, segp, segp, sidenum) & WID_RENDER_FLAG))
 		return;
 	
-	tmap1 = segp->sides[sidenum].tmap_num;
+	const auto tmap1 = segp->sides[sidenum].tmap_num;
 	paging_touch_wall_effects(tmap1);
-	tmap2 = segp->sides[sidenum].tmap_num2;
-	if (tmap2 != 0)	{
+	if (const auto tmap2 = segp->sides[sidenum].tmap_num2)
+	{
 		texmerge_get_cached_bitmap( tmap1, tmap2 );
 		paging_touch_wall_effects( tmap2 & 0x3FFF );
 	} else	{
